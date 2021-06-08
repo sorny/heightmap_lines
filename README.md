@@ -16,40 +16,40 @@ Simply run this sketch in your favorite IDE :)
 
 # Controls / Hotkeys
 
-## W/A/S/D
+### W/A/S/D
 Move the sketch around 
 
-## Y/X
+### Y/X
 Rotate the sketch on the X-axis
 
-## Q
+### Q
 Enable auto-rotation on the Z-axis
 
-## E
+### E
 Rotate the sketch 90-degree clock-wise
 
-## T
+### T
 Reset the rotated sketch
 
-## I/K
+### I/K
 Increase/decrease the scale/resolution of the heightmap
 
-## J/L
+### J/L
 Increase/decrease the space between the lines
 
-## B/N
+### B/N
 Incease/decrease the stroke boldness of the lines
 
-## M
+### M
 Toggle drawing the heightmap mesh
 
-## F
+### F
 Toggle between lines and curves mode
 
-## 1
+### 1
 Record the current sketch as .svg
 
-## 2
+### 2
 Recordig the current sketch as .dxf
 
 
