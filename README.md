@@ -1,7 +1,10 @@
 # heightmap_lines
 ### Version 0.1
-![Alt text](https://github.com/sorny/heightmap_lines/blob/main/heightmap_lines.png?raw=true "heightmap_lines example")
-
+<p float="left">
+<img src="https://github.com/sorny/heightmap_lines/blob/main/data/Heightmap.png?raw=true" alt="heightmap example" height="300">
+  ->
+<img src="https://github.com/sorny/heightmap_lines/blob/main/heightmap_lines.png?raw=true" alt="heightmap_lines example" height="300">
+</p>
 heightmap_lines is a processing sketch to draw a heightmap in lines + adds controls to interact with the sketch.
 
 ### Tech
