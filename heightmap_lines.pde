@@ -55,11 +55,11 @@ void calc_terrain() {
 
 void draw(){
   if(recordSvg) {
-    String filename = "output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.svg";
+    String filename = "output/output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.svg";
     beginRaw(SVG, filename);
   }
   if(recordDxf) {
-    String filename = "output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.dxf";
+    String filename = "output/output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.dxf";
     beginRaw(DXF, filename);
   }
 
