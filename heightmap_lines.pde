@@ -39,6 +39,10 @@ int index(int x, int y, PImage image) {
   return x + y * image.width;
 }
 
+String getOutputFilename(String filetype) {
+  return "output/output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "." + filetype;
+}
+
 void calc_terrain() {
   cols = heightmap.height / scl;
   rows = heightmap.width / scl;
@@ -55,11 +59,13 @@ void calc_terrain() {
 
 void draw(){
   if(recordSvg) {
-    String filename = "output/output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.svg";
+    String filename = getOutputFilename("svg");
+    println("Recording svg to: "+filename);
     beginRaw(SVG, filename);
   }
   if(recordDxf) {
-    String filename = "output/output_" + split(heightmap_name, '.')[0] + "_" + year() + month() + day() + "_" + hour() + minute() + "_####.dxf";
+    String filename = getOutputFilename("dxf");
+    println("Recording dxf to: "+filename);
     beginRaw(DXF, filename);
   }
 
@@ -116,6 +122,7 @@ void draw(){
 
   if(recordSvg || recordDxf) {
     endRaw();
+    println("Done recording...");
     recordSvg = false;
     recordDxf = false;
   }
@@ -182,6 +189,18 @@ void keyPressed()
   }
   if(key == '2') {
     recordDxf = true;
+  }
+  if(key == '3') {
+    String filename = getOutputFilename("tif");
+    println("Recording tif to: "+filename);
+    save(filename);
+    println("Done recording...");
+  }
+  if(key == '4') {
+    String filename = getOutputFilename("png");
+    println("Recording png to: "+filename);
+    save(filename);
+    println("Done recording...");
   }
   if(key == 't') {
     rotation = 0;

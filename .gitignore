@@ -10,3 +10,4 @@ application.macosx
 out
 build-tmp
 output
+data/*

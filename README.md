@@ -55,6 +55,12 @@ Record the current sketch as .svg
 ### 2
 Recordig the current sketch as .dxf
 
+### 3
+Record the current sketch as .tif
+
+### 4
+Recordig the current sketch as .png
+
 
 
 
