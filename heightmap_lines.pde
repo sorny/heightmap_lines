@@ -6,6 +6,8 @@ boolean drawTerrain = true;
 
 int scl = 5;
 int spacer = 1;
+int shiftLines = 0;
+int shiftPeaks = 0;
 int cols;
 int rows;
 boolean flip = true;
@@ -36,7 +38,19 @@ void setup(){
 }
 
 int index(int x, int y, PImage image) {
-  return x + y * image.width;
+  if (x > image.width) {
+    x = image.width;
+  }
+  if (y > image.height) {
+    y = image.height;
+  }
+  int index = x + y * image.width;
+  if (index >= image.width*image.height){
+    return image.width*image.height-1;
+  }
+  else {
+    return index;
+  }
 }
 
 String getOutputFilename(String filetype) {
@@ -50,7 +64,7 @@ void calc_terrain() {
 
   for(int y = 0; y < cols; y++) {
     for(int x = 0; x < rows; x++) {
-      color pix = heightmap.pixels[index(x*scl, y*scl, heightmap)];
+      color pix = heightmap.pixels[index(x*scl+shiftPeaks, y*scl+shiftLines, heightmap)];
       float oldR = red(pix);
       terrain[x][y] = map(oldR, 0, 255, -50, 50);
     }
@@ -73,7 +87,7 @@ void draw(){
     rotation+=rotation_step;
   }
 
-  background(227);
+  background(255);
   stroke(0);
   noFill();
 
@@ -97,7 +111,7 @@ void draw(){
   strokeWeight(stroke);
   if (drawTerrain) {
     if(flip) {
-      stroke(62, 50, 47);
+      stroke(0);
       for(int y = 0; y < cols; y+=spacer) {
         beginShape(LINES);
         for(int x = 0; x < rows-1; x++) {
@@ -109,7 +123,9 @@ void draw(){
     }
 
     if(!flip) {
-      stroke(162, 150, 147);
+      stroke(0);
+      float t = map(mouseX, 0, width, -5, 5);
+      curveTightness(t);
       for(int y = 0; y < cols; y+=spacer) {
         beginShape();
         for(int x = 0; x < rows-1; x++) {
@@ -129,8 +145,7 @@ void draw(){
 }
 
 
-void keyPressed()
-{
+void keyPressed() {
   if(key == 'q') {
     rotating = !rotating;
   }
@@ -207,5 +222,30 @@ void keyPressed()
   }
   if(key == 'e') {
     rotation += 90;
+  }
+  if (key == CODED) {
+    if (keyCode == UP) {
+      if (shiftLines>=scl-1) {
+      } else {
+        shiftLines++;
+      }
+      calc_terrain();
+    } else if (keyCode == DOWN) {
+      if (shiftLines>0) {
+        shiftLines--;
+        calc_terrain();
+      }
+    } else if (keyCode == LEFT) {
+      if (shiftPeaks>=scl-1) {
+      } else {
+        shiftPeaks++;
+      }
+      calc_terrain();
+    } else if (keyCode == RIGHT) {
+      if (shiftPeaks>0) {
+        shiftPeaks--;
+        calc_terrain();
+      }
+    }
   }
 }

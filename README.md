@@ -47,7 +47,7 @@ Incease/decrease the stroke boldness of the lines
 Toggle drawing the heightmap mesh
 
 ### F
-Toggle between lines and curves mode
+Toggle between lines and curves mode. Curve tightness is interactively based on the mouse cursor X-axis position.
 
 ### 1
 Record the current sketch as .svg
@@ -60,6 +60,9 @@ Record the current sketch as .tif
 
 ### 4
 Recordig the current sketch as .png
+
+### Cursor Keys UP/DOWN/LEFT/RIGHT
+Shift the peaks and lines around for fine-adjust of the generated lines
 
 
 
