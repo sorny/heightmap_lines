@@ -15,7 +15,7 @@ heightmap_lines uses open source libs and open data to work properly:
 
 
 # Installation
-Simply run this sketch in your favorite IDE :)
+Simply run this sketch in your favorite processing IDE :)
 
 # Controls / Hotkeys
 
@@ -53,7 +53,7 @@ Toggle between lines and curves mode. Curve tightness is interactively based on 
 Record the current sketch as .svg
 
 ### 2
-Recordig the current sketch as .dxf
+Record the current sketch as .dxf
 
 ### 3
 Record the current sketch as .tif
