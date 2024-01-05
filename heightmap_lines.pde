@@ -110,9 +110,9 @@ void draw(){
     } else {
       noStroke();
     }
-    for(int y = 0; y < cols-1; y++) {
+    for(int y = 0; y < cols-1; y+=spacer) {
       beginShape(TRIANGLE_STRIP);
-      for(int x = 0; x < rows; x++) {
+      for(int x = 0; x < rows-1; x++) {
         vertex(x*scl, y*scl, terrain[x][y]);
         vertex(x*scl, (y+1)*scl, terrain[x][y+1]);
       }
