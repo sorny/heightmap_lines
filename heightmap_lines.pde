@@ -2,6 +2,8 @@ import processing.svg.*;
 import processing.dxf.*;
 
 boolean drawMesh = false;
+boolean drawMeshStroke = true;
+boolean drawFill = false;
 boolean drawTerrain = true;
 
 int scl = 5;
@@ -30,6 +32,7 @@ boolean recordDxf = false;
 
 void setup(){
   fullScreen(P3D);
+  hint(ENABLE_DEPTH_SORT);
   smooth(4);
 
   heightmap = loadImage(heightmap_name);
@@ -89,7 +92,11 @@ void draw(){
 
   background(255);
   stroke(0);
-  noFill();
+  if (drawFill) {
+    fill(255, 255, 255);
+  } else {
+    noFill();
+  }
 
   translate(width/2, height/2);
   rotateX(PI/rotate_x);
@@ -98,6 +105,11 @@ void draw(){
   translate(offset_x, offset_y);
 
   if (drawMesh) {
+    if (drawMeshStroke) {
+      stroke(0);
+    } else {
+      noStroke();
+    }
     for(int y = 0; y < cols-1; y++) {
       beginShape(TRIANGLE_STRIP);
       for(int x = 0; x < rows; x++) {
@@ -198,6 +210,12 @@ void keyPressed() {
   }
   if(key == 'f') {
     flip = !flip;
+  }
+  if(key == 'p') {
+    drawFill = !drawFill;
+  }
+  if(key == 'o') {
+    drawMeshStroke = !drawMeshStroke;
   }
   if(key == '1') {
     recordSvg = true;
