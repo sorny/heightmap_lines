@@ -60,7 +60,20 @@
       font-size: 9px; font-weight: 600;
       letter-spacing: 1.8px; text-transform: uppercase;
       color: #52525b; margin-bottom: 12px;
+      cursor: pointer; user-select: none;
+      display: flex; justify-content: space-between; align-items: center;
     }
+    .sec-title::after {
+      content: '▾'; font-size: 11px; letter-spacing: 0;
+      transition: transform .18s ease;
+    }
+    .sec.collapsed .sec-title { margin-bottom: 0; }
+    .sec.collapsed .sec-title::after { transform: rotate(-90deg); }
+    /* Smooth height animation via grid trick — works for any content height */
+    .sec-body { display: grid; grid-template-rows: 1fr; overflow: hidden;
+                transition: grid-template-rows .2s ease; }
+    .sec.collapsed .sec-body { grid-template-rows: 0fr; }
+    .sec-body > div { min-height: 0; overflow: hidden; }
 
     /* ── Controls ────────────────────────────────────────────────────────── */
     .ctrl { margin-bottom: 10px; }
@@ -1947,7 +1960,26 @@
   }
 
   // ── Panel wiring ─────────────────────────────────────────────────────────────
+  function setupCollapsibleSections() {
+    document.querySelectorAll('.sec-title').forEach(title => {
+      const sec = title.closest('.sec');
+      // Wrap all siblings after the title in sec-body > inner div
+      const inner = document.createElement('div');
+      let next = title.nextElementSibling;
+      while (next) {
+        const el = next; next = next.nextElementSibling;
+        inner.appendChild(el);
+      }
+      const body = document.createElement('div');
+      body.className = 'sec-body';
+      body.appendChild(inner);
+      sec.appendChild(body);
+      title.addEventListener('click', () => sec.classList.toggle('collapsed'));
+    });
+  }
+
   function setupPanel() {
+    setupCollapsibleSections();
     on('scl-sl',       'input', e => setScl(e.target.value));
     on('spacer-sl',    'input', e => setLinePx(e.target.value));
     on('shiftL-sl',    'input', e => setShiftLines(e.target.value));
