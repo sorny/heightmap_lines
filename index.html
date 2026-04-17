@@ -1126,18 +1126,44 @@
         endShape();
 
         // 2. Line / curve lifted above the wall
-        noFill(); stroke(sr, sg, sb, sa); strokeWeight(sw);
-        if (!isCurves) {
-          beginShape(LINES);
-          for (let i = 0; i < pts.length - 3; i += 3) {
-            vertex(pts[i],   pts[i+1],   pts[i+2]);
-            vertex(pts[i+3], pts[i+4],   pts[i+5]);
+        // When gradient is on, use per-vertex colors so peaks get the true high-end
+        // color regardless of row-average elevation.
+        noFill(); strokeWeight(sw);
+        if (lineGradient && _gradLUT) {
+          if (!isCurves) {
+            beginShape(LINES);
+            for (let i = 0; i < pts.length - 3; i += 3) {
+              const idx1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2])   * 255)));
+              const idx2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+5])   * 255)));
+              stroke(_gradLUT[idx1*3], _gradLUT[idx1*3+1], _gradLUT[idx1*3+2], sa);
+              vertex(pts[i],   pts[i+1],   pts[i+2]);
+              stroke(_gradLUT[idx2*3], _gradLUT[idx2*3+1], _gradLUT[idx2*3+2], sa);
+              vertex(pts[i+3], pts[i+4],   pts[i+5]);
+            }
+            endShape();
+          } else {
+            beginShape();
+            for (let i = 0; i < pts.length; i += 3) {
+              const idx = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2]) * 255)));
+              stroke(_gradLUT[idx*3], _gradLUT[idx*3+1], _gradLUT[idx*3+2], sa);
+              curveVertex(pts[i], pts[i+1], pts[i+2]);
+            }
+            endShape();
           }
-          endShape();
         } else {
-          beginShape();
-          for (let i = 0; i < pts.length - 3; i += 3) curveVertex(pts[i], pts[i+1], pts[i+2]);
-          endShape();
+          stroke(sr, sg, sb, sa);
+          if (!isCurves) {
+            beginShape(LINES);
+            for (let i = 0; i < pts.length - 3; i += 3) {
+              vertex(pts[i],   pts[i+1],   pts[i+2]);
+              vertex(pts[i+3], pts[i+4],   pts[i+5]);
+            }
+            endShape();
+          } else {
+            beginShape();
+            for (let i = 0; i < pts.length - 3; i += 3) curveVertex(pts[i], pts[i+1], pts[i+2]);
+            endShape();
+          }
         }
       }
     };
