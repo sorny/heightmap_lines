@@ -2361,7 +2361,10 @@
         if (inElevCutRange(avgZ)) {
           const ax = constrain(round(a.x), 0, W - 1);
           const bx = constrain(round(b.x), 0, W - 1);
-          if (a.y < horizon[ax] || b.y < horizon[bx]) segs.push({ a, b });
+          if (a.y < horizon[ax] || b.y < horizon[bx]) {
+            const slope = Math.abs(terrain[xi1][yi1] - terrain[xi][yi]);
+            segs.push({ a, b, avgZ, slope });
+          }
         }
       }
       segMap.set(outer, segs);
@@ -2384,28 +2387,18 @@
     const anyEff = lineGradient || strokeByElev || slopeOpacity;
     const btfOrder = [...ftbOrder].reverse();
     for (const outer of btfOrder) {
-      let d = '';
-      for (const { a, b } of (segMap.get(outer) || [])) {
-        d += `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
-      }
-      if (d) {
-        if (anyEff) {
-          // Compute row-average z and slope from terrain for colour lookup
-          let sumZ = 0, sumSlope = 0;
-          for (let inner = 0; inner < innerCount; inner++) {
-            const xi = isY ? outer : inner, yi = isY ? inner : outer;
-            sumZ += terrain[xi][yi];
-            if (inner < innerCount - 1) {
-              const xi2 = isY ? outer : inner+1, yi2 = isY ? inner+1 : outer;
-              sumSlope += Math.abs(terrain[xi2][yi2] - terrain[xi][yi]);
-            }
-          }
-          const avgZ = sumZ / innerCount;
-          const avgSlope = innerCount > 1 ? sumSlope / (innerCount - 1) : 0;
-          out.push(`<path ${svgStrokeStyle(avgZ, avgSlope)} d="${d}"/>`);
-        } else {
-          out.push(`<path d="${d}"/>`);
+      const rowSegs = segMap.get(outer) || [];
+      if (!rowSegs.length) continue;
+      if (anyEff) {
+        // Per-segment coloring: each segment's midpoint z drives its gradient color,
+        // matching the per-vertex gradient the canvas renderer produces in WEBGL.
+        for (const { a, b, avgZ, slope } of rowSegs) {
+          out.push(`<path ${svgStrokeStyle(avgZ, slope)} d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
         }
+      } else {
+        let d = '';
+        for (const { a, b } of rowSegs) d += `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
+        out.push(`<path d="${d}"/>`);
       }
     }
   }
@@ -2491,21 +2484,29 @@
             }
           }
         } else {
-          // Curves mode: project x-direction points per row, emit polylines (break at cut boundaries)
+          // Curves mode: per-segment when effects active (matches per-vertex canvas gradient);
+          // batched polyline per row otherwise.
           for (let y = 0; y < cols; y += _lineStep) {
-            let d = '', inSeg = false, sumZ = 0, sumSlope = 0, n = 0;
-            for (let x = 0; x < rows - 1; x++) {
-              const z = terrain[x][y];
-              if (!inElevCutRange(z)) { inSeg = false; continue; }
-              const p = project3D(x * scl, y * scl, z);
-              d += inSeg ? `L${f(p.x)},${f(p.y)}` : `M${f(p.x)},${f(p.y)}`;
-              inSeg = true;
-              sumZ += z; n++;
-              if (x > 0) sumSlope += Math.abs(z - terrain[x-1][y]);
+            if (anyEffect) {
+              for (let x = 0; x < rows - 2; x++) {
+                const z1 = terrain[x][y], z2 = terrain[x+1][y];
+                const avgZ = (z1 + z2) / 2;
+                if (!inElevCutRange(avgZ)) continue;
+                const p1 = project3D(x * scl,       y * scl, z1);
+                const p2 = project3D((x+1) * scl,   y * scl, z2);
+                out.push(`<path ${svgStrokeStyle(avgZ, Math.abs(z2 - z1))} d="M${f(p1.x)},${f(p1.y)}L${f(p2.x)},${f(p2.y)}"/>`);
+              }
+            } else {
+              let d = '', inSeg = false;
+              for (let x = 0; x < rows - 1; x++) {
+                const z = terrain[x][y];
+                if (!inElevCutRange(z)) { inSeg = false; continue; }
+                const p = project3D(x * scl, y * scl, z);
+                d += inSeg ? `L${f(p.x)},${f(p.y)}` : `M${f(p.x)},${f(p.y)}`;
+                inSeg = true;
+              }
+              if (d) out.push(`<path d="${d}"/>`);
             }
-            if (d) out.push(anyEffect && n > 0
-              ? `<path ${svgStrokeStyle(sumZ / n, n > 1 ? sumSlope / (n - 1) : 0)} d="${d}"/>`
-              : `<path d="${d}"/>`);
           }
         }
       }
