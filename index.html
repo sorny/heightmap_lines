@@ -393,6 +393,13 @@
           <span>Auto-rotate &nbsp;<span class="sc">q</span></span>
           <label class="sw"><input type="checkbox" id="rotating-sw"><span class="sw-track"></span></label>
         </div>
+        <div class="ctrl hidden" id="rotspeed-ctrl">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Speed</span>
+            <input type="range" id="rotspeed-sl" min="1" max="50" value="4">
+            <span class="val" id="rotspeed-v">0.4°</span>
+          </div>
+        </div>
 
         <div class="ctrl">
           <div class="ctrl-head"><span>Pan</span><span class="sc">w a s d</span></div>
@@ -611,8 +618,8 @@
   let particleCanvas = null, particleCtx = null;
 
   let rotation  = 0;
-  let rotating  = false;
-  const ROT_STEP = 0.4;
+  let rotating    = false;
+  let rotSpeed    = 0.4;  // degrees per frame
 
   let offsetX = 0, offsetY = 0;
   let zoom    = 1.0;
@@ -837,7 +844,7 @@
 
   function draw() {
     if (!terrain.length) { background(240); return; }
-    if (rotating)        { rotation += ROT_STEP; syncRotation(); }
+    if (rotating)        { rotation += rotSpeed; syncRotation(); }
     if (particlesActive && particlesDirty) buildParticles();
 
     background(rgbBg[0], rgbBg[1], rgbBg[2]);
@@ -1283,7 +1290,13 @@
   function setRotating(v) {
     rotating = v;
     g('rotating-sw').checked = v;
+    g('rotspeed-ctrl').classList.toggle('hidden', !v);
     checkLoop();
+  }
+  function setRotSpeed(v) {
+    rotSpeed = constrain(v / 10, 0.1, 5.0);
+    g('rotspeed-sl').value = Math.round(rotSpeed * 10);
+    g('rotspeed-v').textContent = rotSpeed.toFixed(1) + '°';
   }
   function setDrawMode(mode) {
     ridgelineDirty = true; hachureDirty = true; particlesDirty = true;
@@ -1654,6 +1667,7 @@
     setPointColor(pointColor);
     setPointSize(pointSize);
     setRotating(rotating);
+    setRotSpeed(Math.round(rotSpeed * 10));
     setBgColor(bgColor);
     setLineGradient(lineGradient);
     setLineColorHigh(lineColorHigh);
@@ -1696,6 +1710,7 @@
     on('rot-sl', 'input', e => setRotation(parseInt(e.target.value)));
 
     on('rotating-sw',    'change', e => setRotating(e.target.checked));
+    on('rotspeed-sl',    'input',  e => setRotSpeed(e.target.value));
     on('fill-sw',        'change', e => setFill(e.target.checked));
     on('mesh-sw',        'change', e => setMesh(e.target.checked));
     on('meshStroke-sw',  'change', e => setMeshStroke(e.target.checked));
@@ -2058,7 +2073,7 @@
       drawMesh, drawMeshStroke, drawFillMode, drawLines, drawPoints, lineColor, pointColor, pointSize,
       drawMode, tightness, contourInterval, elevScale, blackPoint, whitePoint,
       bgColor, lineGradient, lineColorHigh, strokeByElev, strokeElevRange,
-      slopeOpacity, blurRadius, hachureLength, pngScale, recordDuration,
+      slopeOpacity, blurRadius, hachureLength, pngScale, recordDuration, rotSpeed,
       particlesActive, particleSpring, particleBrownian, particleDamping,
       particleTrails, particleTrailLength, particleGravity
     };
@@ -2076,6 +2091,7 @@
       setTilt(sv('tiltDeg', 51));
       setRotation(sv('rotation', 0));
       setRotating(sv('rotating', false));
+      setRotSpeed(Math.round(sv('rotSpeed', 0.4) * 10));
       setZoom(sv('zoom', 1));
       setStrokeW(sv('strokeW', 1));
       setDrawMode(sv('drawMode', 'lines-x'));
@@ -2186,7 +2202,8 @@
     strokeByElev: false, strokeElevRange: 3, slopeOpacity: false,
     blurRadius: 0, hachureLength: 10, pngScale: 1, recordDuration: 4,
     particlesActive: false, particleSpring: 0.008, particleBrownian: 0.4,
-    particleDamping: 0.88, particleTrails: true, particleTrailLength: 6, particleGravity: false
+    particleDamping: 0.88, particleTrails: true, particleTrailLength: 6, particleGravity: false,
+    rotSpeed: 0.4
   };
 
   function resetAll() {
@@ -2198,6 +2215,7 @@
     setTilt(DEFAULTS.tiltDeg);
     setRotation(DEFAULTS.rotation);
     setRotating(DEFAULTS.rotating);
+    setRotSpeed(Math.round(DEFAULTS.rotSpeed * 10));
     setZoom(DEFAULTS.zoom);
     setStrokeW(DEFAULTS.strokeW);
     setDrawMode(DEFAULTS.drawMode);

@@ -8,7 +8,11 @@
 
 A browser-based tool that turns a grayscale heightmap image into interactive 3D line art. All controls live in a collapsible side panel — no coding required.
 
-## Running
+## Live demo
+
+**[sorny.github.io/heightmap_lines](https://sorny.github.io/heightmap_lines)**
+
+## Running locally
 
 Browsers block local image loads over `file://`, so serve it with any static server:
 
