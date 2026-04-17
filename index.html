@@ -407,6 +407,22 @@
             </div>
           </div>
 
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Elev min cut</span></div>
+            <div class="sl-row">
+              <input type="range" id="elevcut-min-sl" min="0" max="100" value="0">
+              <span class="val" id="elevcut-min-v">0%</span>
+            </div>
+          </div>
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Elev max cut</span></div>
+            <div class="sl-row">
+              <input type="range" id="elevcut-max-sl" min="0" max="100" value="100">
+              <span class="val" id="elevcut-max-v">100%</span>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -741,6 +757,8 @@
   let slopeOpacity    = false;
   let blurRadius      = 0;
   let blurredPixels   = null;
+  let elevCutMin      = 0;   // 0-1 normalised; skip geometry below this elevation
+  let elevCutMax      = 1;   // 0-1 normalised; skip geometry above this elevation
   let hachureDirty    = true;
   let hachureGeomPts  = null;
   let hachureLength   = 10;
@@ -951,13 +969,23 @@
 
     if (drawMesh) {
       drawMeshStroke ? stroke(0) : noStroke();
-      drawFillMode   ? fill(255) : noFill();
       strokeWeight(1);
+      const meshGrad = drawFillMode && lineGradient && _gradLUT;
+      if (!drawFillMode) noFill();
       for (let y = 0; y < cols - 1; y += _lineStep) {
         beginShape(TRIANGLE_STRIP);
         for (let x = 0; x < rows; x++) {
-          vertex(x * scl, y * scl,       terrain[x][y]);
-          vertex(x * scl, (y+1) * scl,   terrain[x][min(y+1, cols-1)]);
+          const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
+          if (meshGrad) {
+            const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
+            fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
+          } else if (drawFillMode) { fill(255); }
+          vertex(x * scl, y * scl, z1);
+          if (meshGrad) {
+            const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
+            fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
+          } else if (drawFillMode) { fill(255); }
+          vertex(x * scl, (y+1) * scl, z2);
         }
         endShape();
       }
@@ -1003,6 +1031,11 @@
     return terrainMaxZ > terrainMinZ
       ? Math.max(0, Math.min(1, (z - terrainMinZ) / (terrainMaxZ - terrainMinZ)))
       : 0.5;
+  }
+  function inElevCutRange(z) {
+    if (elevCutMin <= 0 && elevCutMax >= 1) return true;
+    const t = normalizeElevation(z);
+    return t >= elevCutMin && t <= elevCutMax;
   }
 
   function getRowAvgZ(pts) {
@@ -1134,11 +1167,21 @@
         const avgSlope = getRowAvgSlope(pts);
         const [sr, sg, sb, sa] = getRowStroke(avgZ, avgSlope);
         const sw = getRowStrokeWeight(avgZ);
+        const doCut = elevCutMin > 0 || elevCutMax < 1;
 
-        // 1. Occluding wall — colour matches background
-        noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+        // 1. Occluding wall — gradient-coloured when fill+gradient are both on, else background
+        noStroke();
+        const wallGrad = drawFillMode && lineGradient && _gradLUT;
         beginShape(TRIANGLE_STRIP);
-        for (let i = 0; i < wall.length; i += 3) vertex(wall[i], wall[i+1], wall[i+2]);
+        for (let i = 0; i < wall.length; i += 3) {
+          if (wallGrad) {
+            const wi = Math.min(255, Math.max(0, Math.round(normalizeElevation(wall[i+2]) * 255)));
+            fill(_gradLUT[wi*3], _gradLUT[wi*3+1], _gradLUT[wi*3+2]);
+          } else {
+            fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+          }
+          vertex(wall[i], wall[i+1], wall[i+2]);
+        }
         endShape();
 
         // 2. Line / curve lifted above the wall
@@ -1149,6 +1192,7 @@
           if (!isCurves) {
             beginShape(LINES);
             for (let i = 0; i < pts.length - 3; i += 3) {
+              if (doCut && !inElevCutRange((pts[i+2] + pts[i+5]) / 2)) continue;
               const idx1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2])   * 255)));
               const idx2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+5])   * 255)));
               stroke(_gradLUT[idx1*3], _gradLUT[idx1*3+1], _gradLUT[idx1*3+2], sa);
@@ -1158,27 +1202,40 @@
             }
             endShape();
           } else {
-            beginShape();
+            // Curves: break spline at cut boundaries so gaps appear mid-row
+            let inShape = false;
             for (let i = 0; i < pts.length; i += 3) {
-              const idx = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2]) * 255)));
-              stroke(_gradLUT[idx*3], _gradLUT[idx*3+1], _gradLUT[idx*3+2], sa);
-              curveVertex(pts[i], pts[i+1], pts[i+2]);
+              const inRange = !doCut || inElevCutRange(pts[i+2]);
+              if (inRange && !inShape) { beginShape(); inShape = true; }
+              else if (!inRange && inShape) { endShape(); inShape = false; }
+              if (inRange) {
+                const idx = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2]) * 255)));
+                stroke(_gradLUT[idx*3], _gradLUT[idx*3+1], _gradLUT[idx*3+2], sa);
+                curveVertex(pts[i], pts[i+1], pts[i+2]);
+              }
             }
-            endShape();
+            if (inShape) endShape();
           }
         } else {
           stroke(sr, sg, sb, sa);
           if (!isCurves) {
             beginShape(LINES);
             for (let i = 0; i < pts.length - 3; i += 3) {
+              if (doCut && !inElevCutRange((pts[i+2] + pts[i+5]) / 2)) continue;
               vertex(pts[i],   pts[i+1],   pts[i+2]);
               vertex(pts[i+3], pts[i+4],   pts[i+5]);
             }
             endShape();
           } else {
-            beginShape();
-            for (let i = 0; i < pts.length - 3; i += 3) curveVertex(pts[i], pts[i+1], pts[i+2]);
-            endShape();
+            // Curves: break spline at cut boundaries so gaps appear mid-row
+            let inShape = false;
+            for (let i = 0; i < pts.length; i += 3) {
+              const inRange = !doCut || inElevCutRange(pts[i+2]);
+              if (inRange && !inShape) { beginShape(); inShape = true; }
+              else if (!inRange && inShape) { endShape(); inShape = false; }
+              if (inRange) curveVertex(pts[i], pts[i+1], pts[i+2]);
+            }
+            if (inShape) endShape();
           }
         }
       }
@@ -1191,13 +1248,23 @@
 
   // ── Contour renderer (uses cached geometry) ────────────────────────────────
   function drawContours() {
-    // 1. Occluding terrain surface — colour matches background
-    noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+    // 1. Occluding terrain surface — gradient when fill+gradient active, else background
+    noStroke();
+    const surfGrad = drawFillMode && lineGradient && _gradLUT;
     for (let y = 0; y < cols - 1; y++) {
       beginShape(TRIANGLE_STRIP);
       for (let x = 0; x < rows; x++) {
-        vertex(x * scl, y * scl,     terrain[x][y]);
-        vertex(x * scl, (y+1) * scl, terrain[x][y+1]);
+        const z1 = terrain[x][y], z2 = terrain[x][y+1];
+        if (surfGrad) {
+          const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
+          fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
+        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(x * scl, y * scl, z1);
+        if (surfGrad) {
+          const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
+          fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
+        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(x * scl, (y+1) * scl, z2);
       }
       endShape();
     }
@@ -1209,12 +1276,17 @@
     if (!anyEffect) {
       stroke(lineColor); strokeWeight(strokeW);
       beginShape(LINES);
-      for (let i = 0; i < contourGeomPts.length; i += 3)
-        vertex(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
+      for (let i = 0; i < contourGeomPts.length; i += 6) {
+        // Each pair of vertices shares the same elevation (contour level = az)
+        if (!inElevCutRange(contourGeomPts[i+2])) continue;
+        vertex(contourGeomPts[i],   contourGeomPts[i+1], contourGeomPts[i+2]);
+        vertex(contourGeomPts[i+3], contourGeomPts[i+4], contourGeomPts[i+5]);
+      }
       endShape();
     } else {
       // O(levels) draw calls — all segments at the same level share color/weight
       for (const { level, pts } of contourLevels) {
+        if (!inElevCutRange(level)) continue;
         const [sr,sg,sb,sa] = getRowStroke(level, terrainMaxSlope * 0.5);
         stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(level));
         beginShape(LINES);
@@ -1250,13 +1322,23 @@
   }
 
   function drawHachures() {
-    // Occluding terrain surface
-    noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+    // Occluding terrain surface — gradient when fill+gradient active, else background
+    noStroke();
+    const surfGrad = drawFillMode && lineGradient && _gradLUT;
     for (let y = 0; y < cols - 1; y++) {
       beginShape(TRIANGLE_STRIP);
       for (let x = 0; x < rows; x++) {
-        vertex(x * scl, y * scl,     terrain[x][y]);
-        vertex(x * scl, (y+1) * scl, terrain[x][min(y+1, cols-1)]);
+        const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
+        if (surfGrad) {
+          const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
+          fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
+        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(x * scl, y * scl, z1);
+        if (surfGrad) {
+          const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
+          fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
+        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(x * scl, (y+1) * scl, z2);
       }
       endShape();
     }
@@ -1268,6 +1350,8 @@
       stroke(lineColor); strokeWeight(strokeW);
       beginShape(LINES);
       for (let i = 0; i < hachureGeomPts.length; i += 7) {
+        const avgZ = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
+        if (!inElevCutRange(avgZ)) continue;
         vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
         vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
       }
@@ -1275,6 +1359,7 @@
     } else {
       for (let i = 0; i < hachureGeomPts.length; i += 7) {
         const avgZ  = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
+        if (!inElevCutRange(avgZ)) continue;
         const slope = hachureGeomPts[i+6]; // pre-stored elevation/grid-step
         const [sr,sg,sb,sa] = getRowStroke(avgZ, slope);
         stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(avgZ));
@@ -1293,6 +1378,7 @@
       if (contourDirty) buildContourCache();
       beginShape(POINTS);
       for (let i = 0; i < contourGeomPts.length; i += 3) {
+        if (!inElevCutRange(contourGeomPts[i+2])) continue;
         vertex(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
       }
       endShape();
@@ -1301,6 +1387,8 @@
       if (hachureGeomPts) {
         beginShape(POINTS);
         for (let i = 0; i < hachureGeomPts.length; i += 7) {
+          const avgZ = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
+          if (!inElevCutRange(avgZ)) continue;
           vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
           vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
         }
@@ -1311,11 +1399,17 @@
       beginShape(POINTS);
       const dirPts = ridgelineRowPtsX || [];
       for (const pts of dirPts) {
-        for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
+        for (let i = 0; i < pts.length; i += 3) {
+          if (!inElevCutRange(pts[i+2])) continue;
+          vertex(pts[i], pts[i+1], pts[i+2]);
+        }
       }
       if (drawMode === 'crosshatch' && ridgelineRowPtsY) {
         for (const pts of ridgelineRowPtsY) {
-          for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
+          for (let i = 0; i < pts.length; i += 3) {
+            if (!inElevCutRange(pts[i+2])) continue;
+            vertex(pts[i], pts[i+1], pts[i+2]);
+          }
         }
       }
       endShape();
@@ -1490,7 +1584,7 @@
     { name: 'Ocean',   stops: [{pos:0,color:'#001433'},{pos:.38,color:'#0055aa'},{pos:.72,color:'#00aacc'},{pos:1,color:'#ccffff'}] },
     { name: 'Topo',    stops: [{pos:0,color:'#1a3300'},{pos:.28,color:'#448800'},{pos:.55,color:'#ccaa22'},{pos:.8,color:'#885533'},{pos:1,color:'#ffffff'}] },
     { name: 'Sunset',  stops: [{pos:0,color:'#1a0033'},{pos:.35,color:'#aa0055'},{pos:.68,color:'#ff4400'},{pos:1,color:'#ffcc00'}] },
-    { name: 'Cool',    stops: [{pos:0,color:'#000022'},{pos:.5,color:'#0033cc'},{pos:1,color:'#00ccff'}] },
+    { name: 'Jet',     stops: [{pos:0,color:'#000080'},{pos:.13,color:'#0000ff'},{pos:.28,color:'#00aaff'},{pos:.42,color:'#00eedd'},{pos:.55,color:'#00dd66'},{pos:.65,color:'#aaee00'},{pos:.73,color:'#ffee00'},{pos:.83,color:'#ff6600'},{pos:.92,color:'#ee0000'},{pos:1,color:'#660000'}] },
     { name: 'Cyber',   stops: [{pos:0,color:'#000000'},{pos:.48,color:'#00cc66'},{pos:1,color:'#00aaff'}] },
   ];
 
@@ -1597,6 +1691,10 @@
   }
   function removeGradientStop(idx) {
     if (elevGradient.length <= 2) return;
+    // Anchor stops at pos 0 and pos 1 cannot be removed
+    const sorted = [...elevGradient].sort((a,b) => a.pos - b.pos);
+    const stop = elevGradient[idx];
+    if (stop === sorted[0] || stop === sorted[sorted.length - 1]) return;
     elevGradient.splice(idx, 1);
     _selStop = Math.min(_selStop, elevGradient.length - 1);
     renderGradientBar();
@@ -1605,6 +1703,18 @@
   function setStrokeElevRange(v) { strokeElevRange = constrain(floor(v), 0, 10); g('strokelev-sl').value = strokeElevRange; g('strokelev-v').textContent = strokeElevRange; markDirty(); }
   function setSlopeOpacity(v)    { slopeOpacity = v; g('slopeopacity-sw').checked = v; markDirty(); }
   function setBlurRadius(v)      { blurRadius = constrain(floor(v), 0, 10); g('blur-sl').value = blurRadius; g('blur-v').textContent = blurRadius; computeBlurredPixels(); calcTerrain(); }
+  function setElevCutMin(v) {
+    elevCutMin = constrain(v / 100, 0, 1);
+    g('elevcut-min-sl').value = Math.round(elevCutMin * 100);
+    g('elevcut-min-v').textContent = Math.round(elevCutMin * 100) + '%';
+    markDirty();
+  }
+  function setElevCutMax(v) {
+    elevCutMax = constrain(v / 100, 0, 1);
+    g('elevcut-max-sl').value = Math.round(elevCutMax * 100);
+    g('elevcut-max-v').textContent = Math.round(elevCutMax * 100) + '%';
+    markDirty();
+  }
   function setHachureLength(v)   { hachureLength = constrain(floor(v), 1, 50); g('hachure-sl').value = hachureLength; g('hachure-v').textContent = hachureLength; hachureDirty = true; markDirty(); }
   function setPngScale(v)        { pngScale = v; [1,2,4].forEach(s => g('pngscale-'+s).classList.toggle('active', s===v)); }
   function setRecordDuration(v)  { recordDuration = constrain(floor(v), 1, 30); g('recdur-sl').value = recordDuration; g('recdur-v').textContent = recordDuration + 's'; }
@@ -1946,6 +2056,8 @@
     setSlopeOpacity(slopeOpacity);
     setBlurRadius(blurRadius);
     setHachureLength(hachureLength);
+    setElevCutMin(elevCutMin * 100);
+    setElevCutMax(elevCutMax * 100);
     setPngScale(pngScale);
     setRecordDuration(recordDuration);
     setParticlesActive(particlesActive);
@@ -2060,6 +2172,8 @@
       this.value = ''; // allow re-loading same file
     });
     on('blur-sl',            'input',  e => setBlurRadius(e.target.value));
+    on('elevcut-min-sl',     'input',  e => setElevCutMin(e.target.value));
+    on('elevcut-max-sl',     'input',  e => setElevCutMax(e.target.value));
     on('bgcolor-pick',       'input',  e => setBgColor(e.target.value));
     on('linegradient-sw',    'change', e => setLineGradient(e.target.checked));
     on('grad-stop-color', 'input', e => {
@@ -2152,6 +2266,7 @@
       case '1': exportSVG();          break;
       case '2': exportDXF();          break;
       case '3': exportHighResPNG();   break;
+      case '4': recordingWebM ? stopRecording() : startRecording(); break;
     }
 
     if (keyCode === UP_ARROW)    setShiftLines(shiftLines + 1);
@@ -2388,7 +2503,7 @@
       drawMesh, drawMeshStroke, drawFillMode, drawLines, drawPoints, lineColor, pointColor, pointSize,
       drawMode, tightness, contourInterval, elevScale, blackPoint, whitePoint,
       bgColor, lineGradient, elevGradient: JSON.parse(JSON.stringify(elevGradient)), strokeByElev, strokeElevRange,
-      slopeOpacity, blurRadius, hachureLength, pngScale, recordDuration, rotSpeed,
+      slopeOpacity, blurRadius, hachureLength, elevCutMin, elevCutMax, pngScale, recordDuration, rotSpeed,
       particlesActive, particleSpring, particleBrownian, particleDamping,
       particleTrails, particleTrailLength, particleGravity, showGrid
     };
@@ -2447,6 +2562,8 @@
     setSlopeOpacity(sv('slopeOpacity', false));
     setBlurRadius(sv('blurRadius', 0));
     setHachureLength(sv('hachureLength', 10));
+    setElevCutMin(sv('elevCutMin', 0) * 100);
+    setElevCutMax(sv('elevCutMax', 1) * 100);
     setPngScale(sv('pngScale', 1));
     setRecordDuration(sv('recordDuration', 4));
     setParticlesActive(sv('particlesActive', false));
@@ -2558,7 +2675,7 @@
     bgColor: '#ffffff', lineGradient: false,
     elevGradient: [{pos:0, color:'#000000'}, {pos:1, color:'#ff6600'}],
     strokeByElev: false, strokeElevRange: 3, slopeOpacity: false,
-    blurRadius: 0, hachureLength: 10, pngScale: 1, recordDuration: 4,
+    blurRadius: 0, hachureLength: 10, elevCutMin: 0, elevCutMax: 1, pngScale: 1, recordDuration: 4,
     particlesActive: false, particleSpring: 0.008, particleBrownian: 0.4,
     particleDamping: 0.88, particleTrails: true, particleTrailLength: 6, particleGravity: false,
     rotSpeed: 0.4, showGrid: false
@@ -2599,6 +2716,8 @@
     setSlopeOpacity(DEFAULTS.slopeOpacity);
     setBlurRadius(DEFAULTS.blurRadius);
     setHachureLength(DEFAULTS.hachureLength);
+    setElevCutMin(DEFAULTS.elevCutMin * 100);
+    setElevCutMax(DEFAULTS.elevCutMax * 100);
     setPngScale(DEFAULTS.pngScale);
     setRecordDuration(DEFAULTS.recordDuration);
     setParticlesActive(DEFAULTS.particlesActive);

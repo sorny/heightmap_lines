@@ -37,6 +37,7 @@ Or skip the server entirely — use the **Load Heightmap** button to upload any 
 | Elev scale | Multiplies peak height (0 = flat → 5× = dramatic) |
 | Blur | Box-blur the heightmap before sampling (integral image, stays fast at any radius) |
 | Shift lines / Shift peaks | Sub-pixel sampling offset for fine placement |
+| Elev min cut / Elev max cut | Exclude elevations outside the 0–100% range from drawing (e.g. cut flat lake areas) |
 
 ### Levels
 Visualises the heightmap's brightness histogram. Drag the handles directly on the histogram or use the Shadows / Highlights sliders to clip the brightness range before elevation mapping.
@@ -107,6 +108,7 @@ Enable under Points → Animate. Particles spring back to their terrain home pos
 | 1 | Export SVG |
 | 2 | Export DXF |
 | 3 | Export PNG |
+| 4 | Toggle WebM recording |
 
 ## Changelog
 
