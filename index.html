@@ -606,10 +606,11 @@
 
         <!-- Gradient line color by elevation -->
         <div class="tog-row">
-          <span>Elev gradient</span>
+          <span>Elevation gradient</span>
           <label class="sw"><input type="checkbox" id="linegradient-sw"><span class="sw-track"></span></label>
         </div>
         <div id="gradient-editor" class="ctrl hidden">
+          <div id="grad-presets" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:8px"></div>
           <div id="grad-bar"></div>
           <div id="grad-handles"></div>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -1430,7 +1431,7 @@
     lineGradient = v;
     g('linegradient-sw').checked = v;
     g('gradient-editor').classList.toggle('hidden', !v);
-    if (v) { if (!_gradLUT) rebuildGradLUT(); renderGradientBar(); }
+    if (v) { renderGradPresets(); if (!_gradLUT) rebuildGradLUT(); renderGradientBar(); }
     markDirty();
   }
   function setLineColorHigh(v) {
@@ -1440,6 +1441,36 @@
   }
 
   // ── Gradient editor ──────────────────────────────────────────────────────────
+  const GRAD_PRESETS = [
+    { name: 'Mono',    stops: [{pos:0,color:'#000000'},{pos:1,color:'#ffffff'}] },
+    { name: 'Classic', stops: [{pos:0,color:'#000000'},{pos:1,color:'#ff6600'}] },
+    { name: 'Fire',    stops: [{pos:0,color:'#1a0000'},{pos:.4,color:'#cc1100'},{pos:.72,color:'#ff6600'},{pos:1,color:'#ffee00'}] },
+    { name: 'Ocean',   stops: [{pos:0,color:'#001433'},{pos:.38,color:'#0055aa'},{pos:.72,color:'#00aacc'},{pos:1,color:'#ccffff'}] },
+    { name: 'Topo',    stops: [{pos:0,color:'#1a3300'},{pos:.28,color:'#448800'},{pos:.55,color:'#ccaa22'},{pos:.8,color:'#885533'},{pos:1,color:'#ffffff'}] },
+    { name: 'Sunset',  stops: [{pos:0,color:'#1a0033'},{pos:.35,color:'#aa0055'},{pos:.68,color:'#ff4400'},{pos:1,color:'#ffcc00'}] },
+    { name: 'Cool',    stops: [{pos:0,color:'#000022'},{pos:.5,color:'#0033cc'},{pos:1,color:'#00ccff'}] },
+    { name: 'Cyber',   stops: [{pos:0,color:'#000000'},{pos:.48,color:'#00cc66'},{pos:1,color:'#00aaff'}] },
+  ];
+
+  function renderGradPresets() {
+    const wrap = g('grad-presets');
+    wrap.innerHTML = '';
+    GRAD_PRESETS.forEach(preset => {
+      const el = document.createElement('div');
+      const parts = preset.stops.map(s => `${s.color} ${(s.pos*100).toFixed(0)}%`).join(',');
+      el.style.cssText = `height:14px;border-radius:3px;cursor:pointer;border:1px solid #3f3f46;background:linear-gradient(to right,${parts});transition:border-color .1s,box-shadow .1s`;
+      el.title = preset.name;
+      el.addEventListener('mouseover', () => el.style.borderColor = '#3b82f6');
+      el.addEventListener('mouseout',  () => el.style.borderColor = '#3f3f46');
+      el.addEventListener('click', () => {
+        elevGradient = JSON.parse(JSON.stringify(preset.stops));
+        _selStop = 0;
+        renderGradientBar();
+      });
+      wrap.appendChild(el);
+    });
+  }
+
   function sampleGradientRGB(t) {
     const s = elevGradient;
     if (t <= s[0].pos) return hexToRGB(s[0].color);
