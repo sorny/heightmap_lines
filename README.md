@@ -1,4 +1,4 @@
-# heightmap_lines
+# heightmap_lines v1.0
 
 <p float="left">
   <img src="https://github.com/sorny/heightmap_lines/blob/main/data/Heightmap.png?raw=true" alt="heightmap example" height="300">
