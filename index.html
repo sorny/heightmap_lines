@@ -2344,9 +2344,15 @@
       const segs = [];
       for (let inner = 0; inner < innerCount - 1; inner++) {
         const a = pts[inner], b = pts[inner + 1];
-        const ax = constrain(round(a.x), 0, W - 1);
-        const bx = constrain(round(b.x), 0, W - 1);
-        if (a.y < horizon[ax] || b.y < horizon[bx]) segs.push({ a, b });
+        // Elevation cut: check terrain z for this segment, skip emission but keep horizon
+        const xi  = isY ? outer : inner,   yi  = isY ? inner   : outer;
+        const xi1 = isY ? outer : inner+1, yi1 = isY ? inner+1 : outer;
+        const avgZ = (terrain[xi][yi] + terrain[xi1][yi1]) / 2;
+        if (inElevCutRange(avgZ)) {
+          const ax = constrain(round(a.x), 0, W - 1);
+          const bx = constrain(round(b.x), 0, W - 1);
+          if (a.y < horizon[ax] || b.y < horizon[bx]) segs.push({ a, b });
+        }
       }
       segMap.set(outer, segs);
 
@@ -2421,6 +2427,7 @@
           if (contourDirty) buildContourCache();
           const cv = contourGeomPts;
           for (let i = 0; i < cv.length; i += 6) {
+            if (!inElevCutRange(cv[i+2])) continue;
             const a = project3D(cv[i],   cv[i+1], cv[i+2]);
             const b = project3D(cv[i+3], cv[i+4], cv[i+5]);
             out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
@@ -2431,20 +2438,25 @@
           if (hachureDirty) buildHachureCache();
           if (hachureGeomPts) {
             for (let i = 0; i < hachureGeomPts.length; i += 7) {
+              const avgZ = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
+              if (!inElevCutRange(avgZ)) continue;
               const a = project3D(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
               const b = project3D(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
               out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
             }
           }
         } else {
-          // Curves mode: project x-direction points per row, emit polylines
+          // Curves mode: project x-direction points per row, emit polylines (break at cut boundaries)
           for (let y = 0; y < cols; y += _lineStep) {
-            const pts = [];
+            let d = '', inSeg = false;
             for (let x = 0; x < rows - 1; x++) {
-              const p = project3D(x * scl, y * scl, terrain[x][y]);
-              pts.push(`${f(p.x)},${f(p.y)}`);
+              const z = terrain[x][y];
+              if (!inElevCutRange(z)) { inSeg = false; continue; }
+              const p = project3D(x * scl, y * scl, z);
+              d += inSeg ? `L${f(p.x)},${f(p.y)}` : `M${f(p.x)},${f(p.y)}`;
+              inSeg = true;
             }
-            if (pts.length) out.push(`<path d="M${pts.join('L')}"/>`);
+            if (d) out.push(`<path d="${d}"/>`);
           }
         }
       }
@@ -2456,6 +2468,7 @@
         if (drawMode === 'contours') {
           if (contourDirty) buildContourCache();
           for (let i = 0; i < contourGeomPts.length; i += 3) {
+            if (!inElevCutRange(contourGeomPts[i+2])) continue;
             const p = project3D(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
             out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}"/>`);
           }
@@ -2466,6 +2479,7 @@
           for (let outer = 0; outer < outerCount; outer += _lineStep) {
             for (let inner = 0; inner < innerCount; inner++) {
               const x = isY ? outer : inner, y = isY ? inner : outer;
+              if (!inElevCutRange(terrain[x][y])) continue;
               const p = project3D(x * scl, y * scl, terrain[x][y]);
               out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}"/>`);
             }
