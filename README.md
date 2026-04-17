@@ -1,4 +1,4 @@
-# heightmap_lines v1.1
+# heightmap_lines v1.2
 
 <p float="left">
   <img src="https://github.com/sorny/heightmap_lines/blob/main/data/Heightmap.png?raw=true" alt="heightmap example" height="300">
@@ -111,6 +111,17 @@ Enable under Points → Animate. Particles spring back to their terrain home pos
 | 4 | Toggle WebM recording |
 
 ## Changelog
+
+### v1.2
+- **Elevation cutoff sliders** — Elev min/max cut in the Terrain section hides geometry (lines, fill, mesh) outside the selected 0–100% elevation range; ridgeline gaps appear mid-row rather than dropping whole lines; SVG export respects the cutoff across all draw modes
+- **Gradient-aware fill** — when Fill and Elevation gradient are both active, the terrain surface and ridgeline walls are colored per-vertex using the gradient LUT instead of flat white
+- **Jet gradient preset** — classic dark-navy → blue → cyan → green → yellow → orange → red → dark-red DEM colormap replaces Cool
+- **0% / 100% gradient stop protection** — anchor stops cannot be deleted; their delete button is hidden when selected
+- **WebM record hotkey 4** — consistent with the 1 / 2 / 3 export shortcuts
+- **Fixed: SVG export colors match viewport** — when gradient, stroke-by-elevation, or slope-opacity are active, each ridgeline segment, contour level, hachure tick, and curves segment now carries its own per-segment stroke color; row-average approximation removed
+- **Fixed: elevation cutoff applies to fill and mesh** — terrain surface triangles and mesh vertices outside the cut range revert to background color
+- **UI: improved sidebar readability** — keyboard shortcut labels, section titles, and export hints lifted from near-invisible dark gray to readable mid-gray
+- **UI: loading overlay redesigned** — card with rounded border replaces bare text on dim backdrop; text color and size improved
 
 ### v1.1
 - **Collapsible panel sections** — click any section header to collapse or expand it
