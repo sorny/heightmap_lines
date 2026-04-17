@@ -1,0 +1,2259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Heightmap Lines</title>
+  <!-- Change 1: warm up CDN connection while HTML parses -->
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { overflow: hidden; background: #fff; font-family: system-ui, -apple-system, sans-serif; }
+
+    /* ── Panel shell ─────────────────────────────────────────────────────── */
+    #panel {
+      position: fixed; right: 0; top: 0;
+      width: 300px; height: 100%;
+      background: #18181b; color: #e4e4e7;
+      z-index: 20; overflow-x: hidden;
+      display: flex; flex-direction: column;
+      transition: transform .22s cubic-bezier(.4,0,.2,1);
+      box-shadow: -3px 0 16px rgba(0,0,0,.4);
+    }
+    #panel.collapsed { transform: translateX(300px); }
+
+    #panel-tab {
+      position: absolute; left: -22px; top: 50%;
+      transform: translateY(-50%);
+      width: 22px; height: 64px;
+      background: #18181b; border-radius: 6px 0 0 6px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: #52525b; font-size: 11px;
+      box-shadow: -2px 0 8px rgba(0,0,0,.35);
+      user-select: none; transition: color .15s;
+    }
+    #panel-tab:hover { color: #a1a1aa; }
+
+    #panel-header {
+      padding: 13px 14px 12px; border-bottom: 1px solid #27272a;
+      flex-shrink: 0; display: flex; align-items: center;
+    }
+    #panel-title {
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase;
+      color: #71717a; flex: 1;
+    }
+
+    /* ── Scroll body ─────────────────────────────────────────────────────── */
+    #panel-body {
+      flex: 1; overflow-x: hidden; overflow-y: auto; padding-bottom: 20px;
+      scrollbar-width: thin; scrollbar-color: #3f3f46 transparent;
+    }
+    #panel-body::-webkit-scrollbar { width: 4px; }
+    #panel-body::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 2px; }
+
+    /* ── Sections ────────────────────────────────────────────────────────── */
+    .sec { padding: 13px 14px 4px; border-bottom: 1px solid #27272a; }
+    .sec-title {
+      font-size: 9px; font-weight: 600;
+      letter-spacing: 1.8px; text-transform: uppercase;
+      color: #52525b; margin-bottom: 12px;
+    }
+
+    /* ── Controls ────────────────────────────────────────────────────────── */
+    .ctrl { margin-bottom: 10px; }
+    .ctrl.hidden { display: none; }
+    .ctrl-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: 5px;
+    }
+    .ctrl-head span { font-size: 12px; color: #d4d4d8; }
+    .sc { font-size: 10px; color: #3f3f46; }
+
+    /* ── Two-column toggle grid ──────────────────────────────────────────── */
+    .tog-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 10px;
+      margin-bottom: 10px;
+    }
+    .tog-grid .tog-row { margin-bottom: 0; }
+    .tog-grid .tog-row > span { font-size: 11px; }
+
+    /* ── Two-column control grid ─────────────────────────────────────────── */
+    .ctrl-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 10px;
+    }
+    .ctrl-grid .ctrl { margin-bottom: 9px; }
+    .ctrl-grid .ctrl-head { margin-bottom: 3px; }
+    .ctrl-grid .ctrl-head span { font-size: 10px; }
+    .ctrl-grid .sc { font-size: 9px; }
+    .ctrl-grid .val { min-width: 36px; font-size: 10px; }
+    /* Item that spans both columns */
+    .ctrl-grid .span2 { grid-column: 1 / -1; }
+
+    /* ── Sliders ─────────────────────────────────────────────────────────── */
+    .sl-row { display: flex; align-items: center; gap: 8px; }
+    input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      flex: 1; min-width: 0; width: 0; /* override browser ~129px default min */
+      height: 3px;
+      background: #3f3f46; border-radius: 2px;
+      outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #3b82f6; cursor: pointer; transition: transform .1s;
+    }
+    input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.2); }
+    input[type=range]::-moz-range-thumb {
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #3b82f6; border: none;
+    }
+    .val {
+      min-width: 38px; text-align: right;
+      font-size: 11px; color: #71717a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Toggle switch ───────────────────────────────────────────────────── */
+    .tog-row {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-bottom: 10px;
+    }
+    .tog-row > span { font-size: 12px; color: #d4d4d8; }
+    .sw { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
+    .sw input { display: none; }
+    .sw-track {
+      position: absolute; inset: 0;
+      background: #3f3f46; border-radius: 9px;
+      cursor: pointer; transition: background .15s;
+    }
+    .sw-track::after {
+      content: ''; position: absolute;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; top: 2px; left: 2px;
+      transition: transform .15s;
+      box-shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+    .sw input:checked ~ .sw-track { background: #3b82f6; }
+    .sw input:checked ~ .sw-track::after { transform: translateX(16px); }
+
+    /* ── Segmented buttons ───────────────────────────────────────────────── */
+    .seg { display: flex; gap: 4px; }
+    .seg button {
+      flex: 1; padding: 5px 0; font-size: 11px; font-weight: 500;
+      background: #27272a; color: #71717a;
+      border: 1px solid #3f3f46; border-radius: 4px;
+      cursor: pointer; transition: background .1s, color .1s;
+    }
+    .seg button.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+    .seg button:hover:not(.active) { background: #3f3f46; color: #d4d4d8; }
+
+    /* ── Small action buttons ────────────────────────────────────────────── */
+    .act-row { display: flex; gap: 5px; align-items: center; }
+    .act-btn {
+      padding: 4px 9px; font-size: 11px; font-weight: 500;
+      background: #27272a; color: #a1a1aa;
+      border: 1px solid #3f3f46; border-radius: 4px;
+      cursor: pointer; transition: background .1s; white-space: nowrap;
+    }
+    .act-btn:hover { background: #3f3f46; color: #e4e4e7; }
+    .rot-display {
+      flex: 1; text-align: center; font-size: 12px; color: #71717a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── D-pad ───────────────────────────────────────────────────────────── */
+    .dpad {
+      display: grid;
+      grid-template-columns: repeat(3, 30px);
+      grid-template-rows: repeat(2, 30px);
+      gap: 3px; width: fit-content; margin: 0 auto;
+    }
+    .dp {
+      width: 30px; height: 30px;
+      background: #27272a; color: #71717a;
+      border: 1px solid #3f3f46; border-radius: 4px;
+      font-size: 10px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .1s; padding: 0; user-select: none;
+    }
+    .dp:hover  { background: #3f3f46; color: #e4e4e7; }
+    .dp:active { background: #3b82f6; color: #fff; }
+
+    /* ── Export buttons ──────────────────────────────────────────────────── */
+    .exp-row { display: flex; gap: 6px; }
+    .exp-btn {
+      flex: 1; padding: 9px 0; text-align: center;
+      background: #27272a; color: #d4d4d8;
+      border: 1px solid #3f3f46; border-radius: 5px;
+      cursor: pointer; font-size: 11px; font-weight: 600;
+      transition: background .1s, border-color .1s;
+    }
+    .exp-btn .hint { display: block; font-size: 9px; color: #3f3f46; font-weight: 400; margin-top: 2px; }
+    .exp-btn:hover { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .exp-btn:hover .hint { color: rgba(255,255,255,.5); }
+
+    /* ── Load button ─────────────────────────────────────────────────────── */
+    .load-lbl {
+      display: block; width: 100%; padding: 8px; text-align: center;
+      background: #27272a; color: #a1a1aa;
+      border: 1px dashed #3f3f46; border-radius: 5px;
+      cursor: pointer; font-size: 11px; transition: background .1s;
+    }
+    .load-lbl:hover { background: #3f3f46; color: #e4e4e7; }
+    #img-input { display: none; }
+
+    /* ── Histogram ───────────────────────────────────────────────────────── */
+    #histogram-canvas {
+      display: block; width: 100%;
+      border-radius: 3px; margin-bottom: 8px; cursor: crosshair;
+    }
+
+    /* ── Color picker ────────────────────────────────────────────────────── */
+    .color-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .color-row > span { font-size: 12px; color: #d4d4d8; }
+    input[type=color].color-pick {
+      -webkit-appearance: none; appearance: none;
+      width: 36px; height: 22px;
+      border: 1px solid #3f3f46; border-radius: 4px;
+      cursor: pointer; padding: 2px; background: #27272a;
+    }
+    input[type=color].color-pick::-webkit-color-swatch-wrapper { padding: 0; }
+    input[type=color].color-pick::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+    /* ── Info overlay ────────────────────────────────────────────────────── */
+    #info-overlay {
+      position: fixed; bottom: 12px; left: 12px;
+      font-size: 10px; color: #52525b;
+      font-family: system-ui, -apple-system, sans-serif;
+      pointer-events: none; font-variant-numeric: tabular-nums;
+      letter-spacing: 0.3px; line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="info-overlay"></div>
+
+  <!-- ── Right panel ─────────────────────────────────────────────────────── -->
+  <div id="panel">
+    <div id="panel-tab" onclick="togglePanel()">
+      <span id="tab-arrow">◀</span>
+    </div>
+
+    <div id="panel-header">
+      <span id="panel-title">Heightmap Lines</span>
+      <button id="reset-btn" title="Reset all to defaults" style="
+        background:none; border:1px solid #3f3f46; border-radius:4px;
+        color:#52525b; font-size:10px; padding:3px 7px; cursor:pointer;
+        transition:color .1s, border-color .1s; flex-shrink:0;
+      " onmouseover="this.style.color='#e4e4e7';this.style.borderColor='#71717a'"
+         onmouseout="this.style.color='#52525b';this.style.borderColor='#3f3f46'">Reset</button>
+    </div>
+
+    <div id="panel-body">
+
+      <!-- Load -->
+      <div class="sec">
+        <label class="load-lbl" for="img-input">
+          ↑ &nbsp;Load Heightmap
+          <input type="file" id="img-input" accept="image/*">
+        </label>
+      </div>
+
+      <!-- Terrain -->
+      <div class="sec">
+        <div class="sec-title">Terrain</div>
+        <div class="ctrl-grid">
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Resolution</span><span class="sc">i/k</span></div>
+            <div class="sl-row">
+              <input type="range" id="scl-sl" min="1" max="20" value="5">
+              <span class="val" id="scl-v">5</span>
+            </div>
+          </div>
+
+          <!-- Line spacing / Contour interval share the same grid cell -->
+          <div>
+            <div class="ctrl" id="spacer-ctrl">
+              <div class="ctrl-head"><span>Line spacing</span><span class="sc">j/l</span></div>
+              <div class="sl-row">
+                <input type="range" id="spacer-sl" min="1" max="200" value="5">
+                <span class="val" id="spacer-v">5 px</span>
+              </div>
+            </div>
+            <div class="ctrl hidden" id="contour-ctrl">
+              <div class="ctrl-head"><span>Contour interval</span></div>
+              <div class="sl-row">
+                <input type="range" id="contour-sl" min="1" max="25" value="5">
+                <span class="val" id="contour-v">5</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Elev scale</span></div>
+            <div class="sl-row">
+              <input type="range" id="elev-sl" min="0" max="50" value="10">
+              <span class="val" id="elev-v">1.0×</span>
+            </div>
+          </div>
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Blur</span></div>
+            <div class="sl-row">
+              <input type="range" id="blur-sl" min="0" max="10" value="0">
+              <span class="val" id="blur-v">0</span>
+            </div>
+          </div>
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Shift lines</span><span class="sc">↑↓</span></div>
+            <div class="sl-row">
+              <input type="range" id="shiftL-sl" min="0" max="4" value="0">
+              <span class="val" id="shiftL-v">0</span>
+            </div>
+          </div>
+
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Shift peaks</span><span class="sc">←→</span></div>
+            <div class="sl-row">
+              <input type="range" id="shiftP-sl" min="0" max="4" value="0">
+              <span class="val" id="shiftP-v">0</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Levels -->
+      <div class="sec">
+        <div class="sec-title">Levels</div>
+        <canvas id="histogram-canvas" width="240" height="70"></canvas>
+        <div class="ctrl-grid">
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Shadows</span></div>
+            <div class="sl-row">
+              <input type="range" id="black-sl" min="0" max="254" value="0">
+              <span class="val" id="black-v" style="color:#60a5fa">0</span>
+            </div>
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Highlights</span></div>
+            <div class="sl-row">
+              <input type="range" id="white-sl" min="1" max="255" value="255">
+              <span class="val" id="white-v" style="color:#f87171">255</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- View -->
+      <div class="sec">
+        <div class="sec-title">View</div>
+        <div class="ctrl-grid">
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Tilt</span><span class="sc">y/x</span></div>
+            <div class="sl-row">
+              <input type="range" id="tilt-sl" min="0" max="180" value="51">
+              <span class="val" id="tilt-v">51°</span>
+            </div>
+          </div>
+          <div class="ctrl">
+            <div class="ctrl-head"><span>Zoom</span><span class="sc">scroll</span></div>
+            <div class="sl-row">
+              <input type="range" id="zoom-sl" min="10" max="400" value="100">
+              <span class="val" id="zoom-v">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl">
+          <div class="ctrl-head"><span>Rotation</span><span class="sc">e / t</span></div>
+          <div class="act-row" style="margin-bottom:6px">
+            <button class="act-btn" id="rot-m">−45°</button>
+            <span class="rot-display" id="rot-v">0°</span>
+            <button class="act-btn" id="rot-p">+45°</button>
+            <button class="act-btn" id="rot-r" title="Reset (T)">↺</button>
+          </div>
+          <div class="sl-row">
+            <input type="range" id="rot-sl" min="0" max="360" value="0">
+          </div>
+        </div>
+
+        <div class="tog-row">
+          <span>Auto-rotate &nbsp;<span class="sc">q</span></span>
+          <label class="sw"><input type="checkbox" id="rotating-sw"><span class="sw-track"></span></label>
+        </div>
+
+        <div class="ctrl">
+          <div class="ctrl-head"><span>Pan</span><span class="sc">w a s d</span></div>
+          <div class="dpad">
+            <div></div>
+            <button class="dp" id="pan-u">▲</button>
+            <div></div>
+            <button class="dp" id="pan-l">◀</button>
+            <button class="dp" id="pan-d">▼</button>
+            <button class="dp" id="pan-r">▶</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Style -->
+      <div class="sec">
+        <div class="sec-title">Style</div>
+
+        <!-- Lines: toggle + color on one row, stroke weight below when enabled -->
+        <div class="tog-row">
+          <span>Lines</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="color" id="linecolor-pick" class="color-pick" value="#000000">
+            <label class="sw"><input type="checkbox" id="drawlines-sw" checked><span class="sw-track"></span></label>
+          </div>
+        </div>
+        <div id="lines-ctrl" class="ctrl">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Weight&nbsp;<span class="sc">b/n</span></span>
+            <input type="range" id="stroke-sl" min="1" max="10" value="1">
+            <span class="val" id="stroke-v">1</span>
+          </div>
+        </div>
+
+        <!-- Points: toggle + color on one row, size below when enabled -->
+        <div class="tog-row">
+          <span>Points</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="color" id="pointcolor-pick" class="color-pick" value="#e63535">
+            <label class="sw"><input type="checkbox" id="drawpoints-sw"><span class="sw-track"></span></label>
+          </div>
+        </div>
+        <div id="points-ctrl" class="ctrl hidden">
+          <div class="sl-row" style="margin-bottom:6px">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Size</span>
+            <input type="range" id="pointsize-sl" min="1" max="20" value="4">
+            <span class="val" id="pointsize-v">4</span>
+          </div>
+          <div class="tog-row" style="margin-bottom:4px">
+            <span style="font-size:11px;color:#d4d4d8">Animate</span>
+            <label class="sw"><input type="checkbox" id="particles-sw"><span class="sw-track"></span></label>
+          </div>
+          <div id="particle-ctrl" class="ctrl hidden" style="margin-bottom:0">
+            <div class="sl-row" style="margin-bottom:6px">
+              <span style="font-size:11px;color:#71717a;white-space:nowrap">Spring</span>
+              <input type="range" id="pspring-sl" min="1" max="100" value="8">
+              <span class="val" id="pspring-v">0.008</span>
+            </div>
+            <div class="sl-row" style="margin-bottom:6px">
+              <span style="font-size:11px;color:#71717a;white-space:nowrap">Chaos</span>
+              <input type="range" id="pbrown-sl" min="0" max="30" value="4">
+              <span class="val" id="pbrown-v">0.4</span>
+            </div>
+            <div class="sl-row" style="margin-bottom:6px">
+              <span style="font-size:11px;color:#71717a;white-space:nowrap">Damping</span>
+              <input type="range" id="pdamp-sl" min="50" max="99" value="88">
+              <span class="val" id="pdamp-v">0.88</span>
+            </div>
+            <div class="tog-row" style="margin-bottom:4px">
+              <span style="font-size:11px;color:#71717a">Trails</span>
+              <label class="sw"><input type="checkbox" id="ptrails-sw" checked><span class="sw-track"></span></label>
+            </div>
+            <div id="ptraillen-ctrl" class="sl-row" style="margin-bottom:6px">
+              <span style="font-size:11px;color:#71717a;white-space:nowrap">Trail&nbsp;len</span>
+              <input type="range" id="ptraillen-sl" min="1" max="30" value="6">
+              <span class="val" id="ptraillen-v">6</span>
+            </div>
+            <div class="tog-row">
+              <span style="font-size:11px;color:#71717a">Gravity</span>
+              <label class="sw"><input type="checkbox" id="pgravity-sw"><span class="sw-track"></span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl">
+          <div class="ctrl-head"><span>Draw mode</span><span class="sc">f</span></div>
+          <div class="seg">
+            <button id="mode-lines-x" class="active">X</button>
+            <button id="mode-lines-y">Y</button>
+            <button id="mode-curves">Curves</button>
+            <button id="mode-crosshatch">Cross</button>
+            <button id="mode-hachure">Hachure</button>
+            <button id="mode-contours">Contours</button>
+          </div>
+        </div>
+
+        <!-- Curve tightness: only in Curves mode -->
+        <div class="ctrl hidden" id="tightness-ctrl">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Tightness</span>
+            <input type="range" id="tightness-sl" min="-50" max="50" value="35">
+            <span class="val" id="tightness-v">3.5</span>
+          </div>
+        </div>
+
+        <!-- Hachure length: only in Hachure mode -->
+        <div class="ctrl hidden" id="hachure-ctrl">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Length</span>
+            <input type="range" id="hachure-sl" min="1" max="50" value="10">
+            <span class="val" id="hachure-v">10</span>
+          </div>
+        </div>
+
+        <!-- Fill and Mesh side by side -->
+        <div class="tog-grid">
+          <div class="tog-row">
+            <span>Fill &nbsp;<span class="sc">p</span></span>
+            <label class="sw"><input type="checkbox" id="fill-sw"><span class="sw-track"></span></label>
+          </div>
+          <div class="tog-row">
+            <span>Mesh &nbsp;<span class="sc">m</span></span>
+            <label class="sw"><input type="checkbox" id="mesh-sw"><span class="sw-track"></span></label>
+          </div>
+        </div>
+        <div class="tog-row" id="meshstroke-tog" style="display:none">
+          <span>Mesh stroke &nbsp;<span class="sc">o</span></span>
+          <label class="sw"><input type="checkbox" id="meshStroke-sw" checked><span class="sw-track"></span></label>
+        </div>
+
+        <!-- Background color -->
+        <div class="tog-row">
+          <span>Background</span>
+          <input type="color" id="bgcolor-pick" class="color-pick" value="#ffffff">
+        </div>
+
+        <!-- Gradient line color by elevation -->
+        <div class="tog-row">
+          <span>Elev gradient</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="color" id="linecolor-high-pick" class="color-pick" value="#ff6600">
+            <label class="sw"><input type="checkbox" id="linegradient-sw"><span class="sw-track"></span></label>
+          </div>
+        </div>
+
+        <!-- Weight by elevation and Opacity by slope side by side -->
+        <div class="tog-grid">
+          <div class="tog-row">
+            <span>Wt by elev</span>
+            <label class="sw"><input type="checkbox" id="strokebyelev-sw"><span class="sw-track"></span></label>
+          </div>
+          <div class="tog-row">
+            <span>Opacity/slope</span>
+            <label class="sw"><input type="checkbox" id="slopeopacity-sw"><span class="sw-track"></span></label>
+          </div>
+        </div>
+        <div id="strokebyelev-ctrl" class="ctrl hidden">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Weight range</span>
+            <input type="range" id="strokelev-sl" min="0" max="10" value="3">
+            <span class="val" id="strokelev-v">3</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="sec">
+        <div class="sec-title">Export</div>
+        <div class="exp-row" style="margin-bottom:6px">
+          <button class="exp-btn" id="exp-svg">SVG<span class="hint">key 1</span></button>
+          <button class="exp-btn" id="exp-dxf">DXF<span class="hint">key 2</span></button>
+          <button class="exp-btn" id="exp-png">PNG<span class="hint">key 3</span></button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+          <span style="font-size:11px;color:#71717a;flex:1">PNG scale</span>
+          <div class="seg" style="width:108px;flex:none">
+            <button id="pngscale-1" class="active">1×</button>
+            <button id="pngscale-2">2×</button>
+            <button id="pngscale-4">4×</button>
+          </div>
+        </div>
+        <div class="exp-row" style="margin-bottom:6px">
+          <button class="exp-btn" id="exp-webm">WebM<span class="hint" id="webm-hint">record</span></button>
+          <button class="exp-btn" id="exp-preset-save">Preset ↓<span class="hint">save</span></button>
+          <label class="exp-btn" for="preset-input" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:9px 0">Preset ↑<span class="hint">load</span></label>
+          <input type="file" id="preset-input" accept=".json" style="display:none">
+        </div>
+        <div class="sl-row">
+          <span style="font-size:11px;color:#71717a;white-space:nowrap">Rec dur</span>
+          <input type="range" id="recdur-sl" min="1" max="30" value="4">
+          <span class="val" id="recdur-v">4s</span>
+        </div>
+      </div>
+
+    </div><!-- /panel-body -->
+  </div><!-- /panel -->
+
+  <!-- crossorigin="anonymous" enables proper CORS caching by CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js" crossorigin="anonymous"></script>
+  <script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let scl        = 5;   // pixels between sampled points along a line
+  let linePx     = 5;   // pixels between adjacent lines (independent of scl)
+  let shiftLines = 0;
+  let shiftPeaks = 0;
+  let rows, cols;
+  let drawMode   = 'lines-x'; // 'lines-x' | 'lines-y' | 'curves' | 'contours'
+  let tightness  = 3.5;       // Catmull-Rom tightness (–5 … 5)
+  let contourInterval = 5;    // elevation units between contour lines
+  let elevScale  = 1.0;       // peak height multiplier (0 = flat, 1 = default, 5 = max)
+
+  let heightmap;
+  let heightmapPixels = null; // Uint8ClampedArray from a willReadFrequently canvas
+  let terrain = [];
+  // 2D overlay canvas for particle rendering (bypasses WEBGL for speed)
+  let particleCanvas = null, particleCtx = null;
+
+  let rotation  = 0;
+  let rotating  = false;
+  const ROT_STEP = 0.4;
+
+  let offsetX = 0, offsetY = 0;
+  let zoom    = 1.0;
+  let tiltDeg = 51;
+  let strokeW = 1;
+
+  let drawMesh       = false;
+  let drawMeshStroke = true;
+  let drawFillMode   = false;
+  let drawLines      = true;
+  let drawPoints     = false;
+  let lineColor      = '#000000';
+  let pointColor     = '#e63535';
+  let pointSize      = 4;
+
+  let blackPoint    = 0;    // 0-254: shadow cutoff
+  let whitePoint    = 255;  // 1-255: highlight cutoff
+  let histogramData = null; // Float32Array(256) of √-normalised counts
+
+  // ── Visual effect state ─────────────────────────────────────────────────────
+  let bgColor         = '#ffffff';
+  let lineGradient    = false;
+  let lineColorHigh   = '#ff6600';
+  let strokeByElev    = false;
+  let strokeElevRange = 3;
+  let slopeOpacity    = false;
+  let blurRadius      = 0;
+  let blurredPixels   = null;
+  let hachureDirty    = true;
+  let hachureGeomPts  = null;
+  let hachureLength   = 10;
+  // Crosshatch stores both X and Y ridgeline caches simultaneously
+  let ridgelineRowPtsX  = null, ridgelineWallPtsX = null;
+  let ridgelineRowPtsY  = null, ridgelineWallPtsY = null;
+  let terrainMinZ     = -50;
+  let terrainMaxZ     =  50;
+  let terrainMaxSlope =  1;
+  // Export state
+  let pngScale        = 1;
+  let recordDuration  = 4;
+  let recordingWebM   = false;
+  let mediaRecorder   = null;
+  let recordChunks    = [];
+  let compositeCanvas = null, compositeCtx = null;
+
+  // ── Particle state ──────────────────────────────────────────────────────────
+  let particlesActive     = false;
+  let particleSpring      = 0.008; // spring constant pulling particles back to home
+  let particleBrownian    = 0.4;   // random noise amplitude per frame
+  let particleDamping     = 0.88;  // velocity multiplier per frame (friction)
+  let particleTrails      = true;
+  let particleTrailLength = 6;     // velocity trail length multiplier
+  let particleGravity     = false;
+  // Particle data — screen-space 2D, Float32Arrays for performance
+  let particleX = null, particleY = null;   // current screen position
+  let particleVX = null, particleVY = null; // velocity
+  let particleHomeW = null; // world-space homes [wx,wy,wz,...] per particle
+  let particleCount = 0;
+  let particleGridCols = 0; // x-direction particles per row
+  let particleGridRows = 0; // number of y-direction rows
+  let particlesDirty = true;
+
+  // Marching-squares edge-pair lookup (indexed by 4-bit corner mask TL=8 TR=4 BR=2 BL=1)
+  const MARCH_SEGS = [
+    [],[[2,3]],[[1,2]],[[1,3]],
+    [[0,1]],[[0,1],[2,3]],[[0,2]],[[0,3]],
+    [[0,3]],[[0,2]],[[0,3],[1,2]],[[0,1]],
+    [[1,3]],[[1,2]],[[2,3]],[]
+  ];
+
+  // ── Geometry cache ────────────────────────────────────────────────────────────
+  // World-space vertex arrays rebuilt only when terrain or layout params change.
+  // View changes (tilt, rotation, pan, zoom) do NOT invalidate the cache.
+  let ridgelineDirty = true;
+  let contourDirty   = true;
+  // contourGeomPts = Float32Array of segment pairs: [ax,ay,az, bx,by,bz, ...]
+  let contourGeomPts   = null;
+  // contourLevels = [{level, pts: Float32Array}, ...] grouped for O(levels) effects rendering
+  let contourLevels    = null;
+
+  // ── Cached derived values ────────────────────────────────────────────────────
+  // Updated in their respective setters; never recomputed per-frame.
+  let _lineStep    = 1;           // max(1, round(linePx/scl)) — updated in setScl/setLinePx
+  let rgbBg        = [255,255,255]; // hexToRGB(bgColor)
+  let rgbLine      = [0,0,0];       // hexToRGB(lineColor)
+  let rgbLineHigh  = [255,102,0];   // hexToRGB(lineColorHigh)
+
+  // ── p5 lifecycle ────────────────────────────────────────────────────────────
+  function preload() {
+    heightmap = loadImage('data/Heightmap.png',
+      () => {},
+      () => console.warn('Default heightmap not found — use Load Heightmap.')
+    );
+  }
+
+  function setup() {
+    setAttributes('antialias', true);
+    createCanvas(windowWidth, windowHeight, WEBGL);
+    // 2D overlay canvas for particle rendering — bypasses WEBGL overhead entirely
+    particleCanvas = Object.assign(document.createElement('canvas'), {
+      width: windowWidth, height: windowHeight
+    });
+    Object.assign(particleCanvas.style, {
+      position: 'fixed', top: '0', left: '0',
+      pointerEvents: 'none', display: 'none'
+    });
+    document.body.appendChild(particleCanvas);
+    particleCtx = particleCanvas.getContext('2d');
+    compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = windowWidth; compositeCanvas.height = windowHeight;
+    compositeCtx = compositeCanvas.getContext('2d');
+    if (heightmap && heightmap.width > 0) initHeightmap();
+    setupPanel();
+    noLoop();
+  }
+
+  // Call after any state change that requires a visual update.
+  function markDirty() { redraw(); }
+
+  // Extract greyscale pixels into our own willReadFrequently canvas.
+  // Avoids p5's loadPixels() which triggers the browser warning.
+  function extractHeightmapPixels() {
+    const cv = Object.assign(document.createElement('canvas'),
+      { width: heightmap.width, height: heightmap.height });
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(heightmap.canvas, 0, 0);
+    const id = ctx.getImageData(0, 0, cv.width, cv.height);
+    for (let i = 0; i < id.data.length; i += 4) {
+      const g = id.data[i] * 0.299 + id.data[i+1] * 0.587 + id.data[i+2] * 0.114;
+      id.data[i] = id.data[i+1] = id.data[i+2] = g;
+    }
+    heightmapPixels = id.data;
+  }
+
+  // Box blur using integral image — O(W×H) regardless of radius.
+  function computeBlurredPixels() {
+    if (blurRadius === 0 || !heightmapPixels) { blurredPixels = null; return; }
+    const W = heightmap.width, H = heightmap.height;
+    const integral = new Float64Array((W + 1) * (H + 1));
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const v = heightmapPixels[(x + y * W) * 4];
+        integral[(x+1) + (y+1)*(W+1)] = v
+          + integral[x + (y+1)*(W+1)]
+          + integral[(x+1) + y*(W+1)]
+          - integral[x + y*(W+1)];
+      }
+    }
+    blurredPixels = new Uint8ClampedArray(W * H * 4);
+    const r = blurRadius;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const x0=Math.max(0,x-r), y0=Math.max(0,y-r);
+        const x1=Math.min(W-1,x+r), y1=Math.min(H-1,y+r);
+        const area = (x1-x0+1)*(y1-y0+1);
+        const sum = integral[(x1+1)+(y1+1)*(W+1)] - integral[x0+(y1+1)*(W+1)]
+                  - integral[(x1+1)+y0*(W+1)]      + integral[x0+y0*(W+1)];
+        const gv = Math.round(sum / area), idx = (x + y * W) * 4;
+        blurredPixels[idx] = blurredPixels[idx+1] = blurredPixels[idx+2] = gv;
+        blurredPixels[idx+3] = 255;
+      }
+    }
+  }
+
+  function initHeightmap() {
+    extractHeightmapPixels();
+    computeBlurredPixels();
+    computeHistogram();
+    shiftLines = 0;
+    shiftPeaks = 0;
+    updateShiftMaxes();
+    calcTerrain();
+    syncAll();
+  }
+
+  function updateShiftMaxes() {
+    const m = max(scl - 1, 0);
+    g('shiftL-sl').max = m;
+    g('shiftP-sl').max = m;
+  }
+
+  // ── Terrain ─────────────────────────────────────────────────────────────────
+  function calcTerrain() {
+    if (!heightmapPixels || !heightmap || heightmap.width === 0) return;
+    cols    = floor(heightmap.height / scl);
+    rows    = floor(heightmap.width  / scl);
+    terrain = [];
+    const pixels = blurredPixels || heightmapPixels;
+    terrainMinZ = Infinity; terrainMaxZ = -Infinity;
+    for (let x = 0; x < rows; x++) {
+      terrain[x] = [];
+      for (let y = 0; y < cols; y++) {
+        const px = min(x * scl + shiftPeaks, heightmap.width  - 1);
+        const py = min(y * scl + shiftLines, heightmap.height - 1);
+        const raw     = pixels[(px + py * heightmap.width) * 4];
+        const clipped = constrain(raw, blackPoint, whitePoint);
+        const z = map(clipped, blackPoint, whitePoint, -50, 50) * elevScale;
+        terrain[x][y] = z;
+        if (z < terrainMinZ) terrainMinZ = z;
+        if (z > terrainMaxZ) terrainMaxZ = z;
+      }
+    }
+    // Compute max slope for slope-opacity normalisation
+    terrainMaxSlope = 0.001;
+    for (let x = 0; x < rows - 1; x++) {
+      for (let y = 0; y < cols - 1; y++) {
+        const s = Math.max(Math.abs(terrain[x+1][y] - terrain[x][y]),
+                           Math.abs(terrain[x][y+1] - terrain[x][y]));
+        if (s > terrainMaxSlope) terrainMaxSlope = s;
+      }
+    }
+    // Terrain changed — invalidate all geometry caches
+    ridgelineDirty = true;
+    contourDirty   = true;
+    hachureDirty   = true;
+    particlesDirty = true;
+    markDirty();
+  }
+
+  // ── Draw ────────────────────────────────────────────────────────────────────
+  const Z_LIFT = 0.3;
+
+  function draw() {
+    if (!terrain.length) { background(240); return; }
+    if (rotating)        { rotation += ROT_STEP; syncRotation(); }
+    if (particlesActive && particlesDirty) buildParticles();
+
+    background(rgbBg[0], rgbBg[1], rgbBg[2]);
+
+    // ── 3D scene ──────────────────────────────────────────────────────────────
+    push();
+    scale(zoom);
+    rotateX(radians(tiltDeg));
+    rotateZ(radians(rotation));
+    translate(-heightmap.width / 2 + offsetX, -heightmap.height / 2 + offsetY, 0);
+
+    if (drawMesh) {
+      drawMeshStroke ? stroke(0) : noStroke();
+      drawFillMode   ? fill(255) : noFill();
+      strokeWeight(1);
+      for (let y = 0; y < cols - 1; y += _lineStep) {
+        beginShape(TRIANGLE_STRIP);
+        for (let x = 0; x < rows; x++) {
+          vertex(x * scl, y * scl,       terrain[x][y]);
+          vertex(x * scl, (y+1) * scl,   terrain[x][min(y+1, cols-1)]);
+        }
+        endShape();
+      }
+    }
+
+    strokeWeight(strokeW);
+    // Static 3D rendering — suppressed when particles are animating (overlay takes over)
+    if (!particlesActive) {
+      if (drawLines) {
+        if      (drawMode === 'contours') drawContours();
+        else if (drawMode === 'hachure')  drawHachures();
+        else                              drawRidgelines();
+      }
+      if (drawPoints) drawPoints3D();
+    }
+    pop();
+    // ── end 3D scene ──────────────────────────────────────────────────────────
+
+    // Particle overlay — 2D canvas drawn outside WEBGL context
+    if (particlesActive) {
+      updateParticles();
+      drawParticles2D();
+    }
+
+    // WebM recording — composite GL canvas + particle overlay each frame
+    if (recordingWebM && compositeCtx) {
+      const cw = compositeCanvas.width, ch = compositeCanvas.height;
+      compositeCtx.clearRect(0, 0, cw, ch);
+      compositeCtx.drawImage(drawingContext.canvas, 0, 0, cw, ch);
+      if (particlesActive && particleCanvas) compositeCtx.drawImage(particleCanvas, 0, 0, cw, ch);
+    }
+
+    updateInfo();
+  }
+
+  // ── Color helpers ────────────────────────────────────────────────────────────
+  const hexToRGB = hex => [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+  const lerpRGB  = (a, b, t) => a.map((v, i) => Math.round(v + t * (b[i] - v)));
+
+  // Returns 0–1 elevation fraction; 0.5 when terrain is flat.
+  function normalizeElevation(z) {
+    return terrainMaxZ > terrainMinZ
+      ? Math.max(0, Math.min(1, (z - terrainMinZ) / (terrainMaxZ - terrainMinZ)))
+      : 0.5;
+  }
+
+  function getRowAvgZ(pts) {
+    let s = 0;
+    for (let i = 2; i < pts.length; i += 3) s += pts[i];
+    return s / (pts.length / 3);
+  }
+  function getRowAvgSlope(pts) {
+    let s = 0, n = pts.length / 3 - 1;
+    for (let i = 0; i < pts.length - 3; i += 3) s += Math.abs(pts[i+5] - pts[i+2]);
+    return n > 0 ? s / n : 0;
+  }
+  function getRowStroke(avgZ, avgSlope) {
+    const t = normalizeElevation(avgZ);
+    const [r, g, b] = lineGradient ? lerpRGB(rgbLine, rgbLineHigh, t) : rgbLine;
+    let a = 255;
+    if (slopeOpacity) {
+      const norm = terrainMaxSlope > 0 ? Math.max(0, Math.min(1, avgSlope / terrainMaxSlope)) : 1;
+      a = Math.round(30 + norm * 225);
+    }
+    return [r, g, b, a];
+  }
+  function getRowStrokeWeight(avgZ) {
+    if (!strokeByElev) return strokeW;
+    return strokeW + normalizeElevation(avgZ) * strokeElevRange;
+  }
+
+  // ── Ridgeline geometry cache ─────────────────────────────────────────────────
+  // Parameterised builder — called for X and/or Y direction depending on drawMode.
+  function buildRidgelineCacheForDir(isY) {
+    const rowPts = [], wallPts = [];
+    const outerCount = isY ? rows : cols;
+    const innerCount = isY ? cols : rows;
+    const step = _lineStep;
+    for (let outer = 0; outer < outerCount; outer += step) {
+      const pts  = new Float32Array(innerCount * 3);
+      const wall = new Float32Array(innerCount * 6);
+      for (let inner = 0; inner < innerCount; inner++) {
+        const x = isY ? outer : inner, y = isY ? inner : outer;
+        const pi = inner * 3;
+        pts[pi]   = x * scl; pts[pi+1] = y * scl; pts[pi+2] = terrain[x][y] + Z_LIFT;
+        const wi = inner * 6;
+        wall[wi]   = x * scl; wall[wi+1] = y * scl; wall[wi+2] = terrain[x][y];
+        wall[wi+3] = x * scl; wall[wi+4] = y * scl; wall[wi+5] = -60;
+      }
+      rowPts.push(pts); wallPts.push(wall);
+    }
+    return { rowPts, wallPts };
+  }
+
+  function buildRidgelineCache() {
+    const isCross = drawMode === 'crosshatch';
+    const isY     = drawMode === 'lines-y';
+    const resX = buildRidgelineCacheForDir(false);
+    ridgelineRowPtsX = resX.rowPts; ridgelineWallPtsX = resX.wallPts;
+    if (isCross) {
+      const resY = buildRidgelineCacheForDir(true);
+      ridgelineRowPtsY = resY.rowPts; ridgelineWallPtsY = resY.wallPts;
+    } else if (isY) {
+      const resY = buildRidgelineCacheForDir(true);
+      ridgelineRowPtsX = resY.rowPts; ridgelineWallPtsX = resY.wallPts;
+      ridgelineRowPtsY = null; ridgelineWallPtsY = null;
+    } else {
+      ridgelineRowPtsY = null; ridgelineWallPtsY = null;
+    }
+    ridgelineDirty = false;
+  }
+
+  // ── Build contour geometry cache ──────────────────────────────────────────
+  // Runs marching squares once per terrain/interval change, not every frame.
+  // Populates contourGeomPts (flat, for simple render path) and
+  // contourLevels (grouped by level, for O(levels) effects render path).
+  function buildContourCache() {
+    const allVerts = [];
+    const levels   = [];
+    for (let level = terrainMinZ; level <= terrainMaxZ + 0.001; level += contourInterval) {
+      const lvVerts = [];
+      for (let xi = 0; xi < rows - 1; xi++) {
+        for (let yi = 0; yi < cols - 1; yi++) {
+          const h00 = terrain[xi][yi],       h10 = terrain[xi+1][yi];
+          const h11 = terrain[xi+1][yi+1],   h01 = terrain[xi][yi+1];
+          const c = (h00>=level?8:0)|(h10>=level?4:0)|(h11>=level?2:0)|(h01>=level?1:0);
+          if (c===0||c===15) continue;
+          const x0=xi*scl, x1=(xi+1)*scl, y0=yi*scl, y1=(yi+1)*scl;
+          const lp = (a,b,ha,hb) => (hb===ha) ? (a+b)/2 : a+(level-ha)/(hb-ha)*(b-a);
+          const ep = e => {
+            switch(e) {
+              case 0: return [lp(x0,x1,h00,h10), y0];
+              case 1: return [x1, lp(y0,y1,h10,h11)];
+              case 2: return [lp(x1,x0,h11,h01), y1];
+              case 3: return [x0, lp(y1,y0,h01,h00)];
+            }
+          };
+          for (const [e0,e1] of MARCH_SEGS[c]) {
+            const [ax,ay]=ep(e0), [bx,by]=ep(e1);
+            lvVerts.push(ax, ay, level+Z_LIFT, bx, by, level+Z_LIFT);
+            allVerts.push(ax, ay, level+Z_LIFT, bx, by, level+Z_LIFT);
+          }
+        }
+      }
+      if (lvVerts.length) levels.push({ level, pts: new Float32Array(lvVerts) });
+    }
+    contourGeomPts = new Float32Array(allVerts);
+    contourLevels  = levels;
+    contourDirty   = false;
+  }
+
+  // ── Ridgeline renderer (uses cached geometry) ──────────────────────────────
+  function drawRidgelines() {
+    if (ridgelineDirty) buildRidgelineCache();
+
+    const isCurves = drawMode === 'curves';
+    const isCross  = drawMode === 'crosshatch';
+    if (isCurves) curveTightness(tightness);
+
+    const renderDir = (rowPtsArr, wallPtsArr) => {
+      for (let ri = 0; ri < rowPtsArr.length; ri++) {
+        const wall = wallPtsArr[ri], pts = rowPtsArr[ri];
+        const avgZ     = getRowAvgZ(pts);
+        const avgSlope = getRowAvgSlope(pts);
+        const [sr, sg, sb, sa] = getRowStroke(avgZ, avgSlope);
+        const sw = getRowStrokeWeight(avgZ);
+
+        // 1. Occluding wall — colour matches background
+        noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+        beginShape(TRIANGLE_STRIP);
+        for (let i = 0; i < wall.length; i += 3) vertex(wall[i], wall[i+1], wall[i+2]);
+        endShape();
+
+        // 2. Line / curve lifted above the wall
+        noFill(); stroke(sr, sg, sb, sa); strokeWeight(sw);
+        if (!isCurves) {
+          beginShape(LINES);
+          for (let i = 0; i < pts.length - 3; i += 3) {
+            vertex(pts[i],   pts[i+1],   pts[i+2]);
+            vertex(pts[i+3], pts[i+4],   pts[i+5]);
+          }
+          endShape();
+        } else {
+          beginShape();
+          for (let i = 0; i < pts.length - 3; i += 3) curveVertex(pts[i], pts[i+1], pts[i+2]);
+          endShape();
+        }
+      }
+    };
+
+    renderDir(ridgelineRowPtsX, ridgelineWallPtsX);
+    if (isCross && ridgelineRowPtsY) renderDir(ridgelineRowPtsY, ridgelineWallPtsY);
+    strokeWeight(strokeW); // restore base weight
+  }
+
+  // ── Contour renderer (uses cached geometry) ────────────────────────────────
+  function drawContours() {
+    // 1. Occluding terrain surface — colour matches background
+    noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+    for (let y = 0; y < cols - 1; y++) {
+      beginShape(TRIANGLE_STRIP);
+      for (let x = 0; x < rows; x++) {
+        vertex(x * scl, y * scl,     terrain[x][y]);
+        vertex(x * scl, (y+1) * scl, terrain[x][y+1]);
+      }
+      endShape();
+    }
+
+    // 2. Contour lines from cache
+    if (contourDirty) buildContourCache();
+    noFill();
+    const anyEffect = lineGradient || strokeByElev || slopeOpacity;
+    if (!anyEffect) {
+      stroke(lineColor); strokeWeight(strokeW);
+      beginShape(LINES);
+      for (let i = 0; i < contourGeomPts.length; i += 3)
+        vertex(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
+      endShape();
+    } else {
+      // O(levels) draw calls — all segments at the same level share color/weight
+      for (const { level, pts } of contourLevels) {
+        const [sr,sg,sb,sa] = getRowStroke(level, terrainMaxSlope * 0.5);
+        stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(level));
+        beginShape(LINES);
+        for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
+        endShape();
+      }
+    }
+  }
+
+  // ── Hachure renderer ────────────────────────────────────────────────────────
+  // Hachure cache: 7 floats per segment — ax,ay,az,bx,by,bz,slope
+  // slope is in elevation/grid-step units (same as terrainMaxSlope).
+  function buildHachureCache() {
+    if (!terrain.length) return;
+    const verts = [], step = _lineStep, hl = hachureLength;
+    for (let x = 1; x < rows - 1; x += step) {
+      for (let y = 1; y < cols - 1; y += step) {
+        const dx = (terrain[x+1][y] - terrain[x-1][y]) / (2 * scl);
+        const dy = (terrain[x][y+1] - terrain[x][y-1]) / (2 * scl);
+        const gradMag = Math.sqrt(dx*dx + dy*dy);
+        if (gradMag < 0.001) continue;
+        const slopePerStep = gradMag * scl; // convert to elevation per grid-step
+        const len = gradMag * scl * hl;
+        const nx = -dy / gradMag, ny = dx / gradMag; // perpendicular to gradient
+        const cx = x * scl, cy = y * scl, cz = terrain[x][y] + Z_LIFT;
+        verts.push(cx - nx*len/2, cy - ny*len/2, cz,
+                   cx + nx*len/2, cy + ny*len/2, cz,
+                   slopePerStep);
+      }
+    }
+    hachureGeomPts = new Float32Array(verts);
+    hachureDirty   = false;
+  }
+
+  function drawHachures() {
+    // Occluding terrain surface
+    noStroke(); fill(rgbBg[0], rgbBg[1], rgbBg[2]);
+    for (let y = 0; y < cols - 1; y++) {
+      beginShape(TRIANGLE_STRIP);
+      for (let x = 0; x < rows; x++) {
+        vertex(x * scl, y * scl,     terrain[x][y]);
+        vertex(x * scl, (y+1) * scl, terrain[x][min(y+1, cols-1)]);
+      }
+      endShape();
+    }
+    if (hachureDirty) buildHachureCache();
+    if (!hachureGeomPts || hachureGeomPts.length === 0) return;
+    noFill();
+    const anyEffect = lineGradient || strokeByElev || slopeOpacity;
+    if (!anyEffect) {
+      stroke(lineColor); strokeWeight(strokeW);
+      beginShape(LINES);
+      for (let i = 0; i < hachureGeomPts.length; i += 7) {
+        vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
+        vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
+      }
+      endShape();
+    } else {
+      for (let i = 0; i < hachureGeomPts.length; i += 7) {
+        const avgZ  = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
+        const slope = hachureGeomPts[i+6]; // pre-stored elevation/grid-step
+        const [sr,sg,sb,sa] = getRowStroke(avgZ, slope);
+        stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(avgZ));
+        beginShape(LINES);
+        vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
+        vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
+        endShape();
+      }
+    }
+  }
+
+  // Draw point markers at every terrain vertex on the rendered lines/contours.
+  function drawPoints3D() {
+    stroke(pointColor); strokeWeight(pointSize + 1);
+    if (drawMode === 'contours') {
+      if (contourDirty) buildContourCache();
+      beginShape(POINTS);
+      for (let i = 0; i < contourGeomPts.length; i += 3) {
+        vertex(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
+      }
+      endShape();
+    } else if (drawMode === 'hachure') {
+      if (hachureDirty) buildHachureCache();
+      if (hachureGeomPts) {
+        beginShape(POINTS);
+        for (let i = 0; i < hachureGeomPts.length; i += 7) {
+          vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
+          vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
+        }
+        endShape();
+      }
+    } else {
+      if (ridgelineDirty) buildRidgelineCache();
+      beginShape(POINTS);
+      const dirPts = ridgelineRowPtsX || [];
+      for (const pts of dirPts) {
+        for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
+      }
+      if (drawMode === 'crosshatch' && ridgelineRowPtsY) {
+        for (const pts of ridgelineRowPtsY) {
+          for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
+        }
+      }
+      endShape();
+    }
+  }
+
+  // Update the bottom-left info overlay with current render stats.
+  function updateInfo() {
+    const el = g('info-overlay');
+    if (!el || !terrain.length) return;
+    const step = _lineStep;
+    let segs = 0, verts = 0, tris = 0;
+    if (drawMode === 'contours') {
+      if (!contourDirty && contourGeomPts) {
+        segs  = contourGeomPts.length / 6;
+        verts = contourGeomPts.length / 3;
+      }
+      tris = (cols - 1) * rows * 2;
+    } else {
+      const isY  = drawMode === 'lines-y';
+      const outer = isY ? rows : cols;
+      const inner = isY ? cols : rows;
+      const lines = ceil(outer / step);
+      segs  = lines * (inner - 1);
+      verts = lines * inner;
+      tris  = lines * (inner * 2 - 2);
+    }
+    const fmt = n => n.toLocaleString();
+    el.textContent = `${fmt(segs)} segments · ${fmt(verts)} vertices · ${fmt(tris)} triangles`
+      + (drawPoints ? ` · ${fmt(verts)} points` : '');
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    if (particleCanvas)   { particleCanvas.width   = windowWidth; particleCanvas.height   = windowHeight; }
+    if (compositeCanvas)  { compositeCanvas.width  = windowWidth; compositeCanvas.height  = windowHeight; }
+    markDirty();
+  }
+
+  // ── Setters ─────────────────────────────────────────────────────────────────
+  function setScl(v) {
+    scl = constrain(floor(v), 1, 20);
+    if (shiftLines >= scl) shiftLines = scl - 1;
+    if (shiftPeaks >= scl) shiftPeaks = scl - 1;
+    _lineStep = Math.max(1, Math.round(linePx / scl));
+    updateShiftMaxes();
+    calcTerrain();   // calls markDirty internally
+    syncSlider('scl',    scl,        scl);
+    syncSlider('shiftL', shiftLines, shiftLines);
+    syncSlider('shiftP', shiftPeaks, shiftPeaks);
+  }
+  function setLinePx(v) {
+    linePx = constrain(floor(v), 1, 200);
+    _lineStep = Math.max(1, Math.round(linePx / scl));
+    ridgelineDirty = true;
+    hachureDirty   = true;
+    particlesDirty = true;
+    g('spacer-sl').value = linePx;
+    g('spacer-v').textContent = linePx + ' px';
+    markDirty();
+  }
+  function setShiftLines(v) {
+    shiftLines = constrain(floor(v), 0, scl - 1);
+    calcTerrain();
+    syncSlider('shiftL', shiftLines, shiftLines);
+  }
+  function setShiftPeaks(v) {
+    shiftPeaks = constrain(floor(v), 0, scl - 1);
+    calcTerrain();
+    syncSlider('shiftP', shiftPeaks, shiftPeaks);
+  }
+  function setStrokeW(v)  { strokeW = constrain(floor(v), 1, 10); syncSlider('stroke', strokeW, strokeW); markDirty(); }
+  function setContourInterval(v) {
+    contourInterval = constrain(floor(v), 1, 25);
+    contourDirty = true;
+    syncSlider('contour', contourInterval, contourInterval);
+    markDirty();
+  }
+  function setElevScale(v) {
+    elevScale = constrain(v / 10, 0, 5);
+    g('elev-sl').value = round(elevScale * 10);
+    g('elev-v').textContent = elevScale.toFixed(1) + '×';
+    calcTerrain(); // rebuilds terrain and invalidates geometry caches
+  }
+  function setTightness(v) {
+    tightness = constrain(v / 10, -5, 5);
+    const raw = round(tightness * 10);
+    g('tightness-sl').value = raw;
+    g('tightness-v').textContent = tightness.toFixed(1);
+    markDirty();
+  }
+  function setTilt(deg) {
+    tiltDeg = constrain(deg, 0, 180);
+    syncTilt();
+    markDirty();
+  }
+  function setRotation(r) { rotation = r; syncRotation(); markDirty(); }
+  function checkLoop() {
+    if (rotating || particlesActive) loop(); else { noLoop(); markDirty(); }
+  }
+  function setRotating(v) {
+    rotating = v;
+    g('rotating-sw').checked = v;
+    checkLoop();
+  }
+  function setDrawMode(mode) {
+    ridgelineDirty = true; hachureDirty = true; particlesDirty = true;
+    drawMode = mode;
+    ['lines-x','lines-y','curves','crosshatch','hachure','contours'].forEach(m =>
+      g('mode-' + m).classList.toggle('active', mode === m));
+    g('spacer-ctrl').classList.toggle('hidden',    mode === 'contours');
+    g('contour-ctrl').classList.toggle('hidden',   mode !== 'contours');
+    g('tightness-ctrl').classList.toggle('hidden', mode !== 'curves');
+    g('hachure-ctrl').classList.toggle('hidden',   mode !== 'hachure');
+    markDirty();
+  }
+  function setDrawLines(v)  { drawLines = v; g('drawlines-sw').checked = v; g('lines-ctrl').classList.toggle('hidden', !v); markDirty(); }
+  function setFill(v)       { drawFillMode   = v; g('fill-sw').checked = v;       markDirty(); }
+  function setMesh(v)       { drawMesh = v; g('mesh-sw').checked = v; g('meshstroke-tog').style.display = v ? '' : 'none'; markDirty(); }
+  function setMeshStroke(v) { drawMeshStroke = v; g('meshStroke-sw').checked = v; markDirty(); }
+  function setDrawPoints(v) {
+    drawPoints = v;
+    g('drawpoints-sw').checked = v;
+    g('points-ctrl').classList.toggle('hidden', !v);
+    if (!v) setParticlesActive(false);
+    markDirty();
+  }
+  function setLineColor(v)  { lineColor  = v; rgbLine = hexToRGB(v); g('linecolor-pick').value  = v; markDirty(); }
+  function setPointColor(v) { pointColor = v; g('pointcolor-pick').value = v; markDirty(); }
+  function setPointSize(v)  {
+    pointSize = constrain(floor(v), 1, 20);
+    g('pointsize-sl').value = pointSize;
+    g('pointsize-v').textContent = pointSize;
+    markDirty();
+  }
+  function setBgColor(v)         { bgColor = v; rgbBg = hexToRGB(v); g('bgcolor-pick').value = v; markDirty(); }
+  function setLineGradient(v)    { lineGradient = v; g('linegradient-sw').checked = v; markDirty(); }
+  function setLineColorHigh(v)   { lineColorHigh = v; rgbLineHigh = hexToRGB(v); g('linecolor-high-pick').value = v; markDirty(); }
+  function setStrokeByElev(v)    { strokeByElev = v; g('strokebyelev-sw').checked = v; g('strokebyelev-ctrl').classList.toggle('hidden', !v); markDirty(); }
+  function setStrokeElevRange(v) { strokeElevRange = constrain(floor(v), 0, 10); g('strokelev-sl').value = strokeElevRange; g('strokelev-v').textContent = strokeElevRange; markDirty(); }
+  function setSlopeOpacity(v)    { slopeOpacity = v; g('slopeopacity-sw').checked = v; markDirty(); }
+  function setBlurRadius(v)      { blurRadius = constrain(floor(v), 0, 10); g('blur-sl').value = blurRadius; g('blur-v').textContent = blurRadius; computeBlurredPixels(); calcTerrain(); }
+  function setHachureLength(v)   { hachureLength = constrain(floor(v), 1, 50); g('hachure-sl').value = hachureLength; g('hachure-v').textContent = hachureLength; hachureDirty = true; markDirty(); }
+  function setPngScale(v)        { pngScale = v; [1,2,4].forEach(s => g('pngscale-'+s).classList.toggle('active', s===v)); }
+  function setRecordDuration(v)  { recordDuration = constrain(floor(v), 1, 30); g('recdur-sl').value = recordDuration; g('recdur-v').textContent = recordDuration + 's'; }
+
+  function setZoom(v) {
+    zoom = constrain(v, 0.1, 4.0);
+    g('zoom-sl').value = round(zoom * 100);
+    g('zoom-v').textContent = round(zoom * 100) + '%';
+    markDirty();
+  }
+  function mouseWheel(event) {
+    // Let the panel scroll normally — only zoom when the pointer is over the canvas
+    if (event.target && event.target.closest('#panel')) return;
+    // ±5% per scroll notch regardless of scroll speed/device
+    setZoom(zoom * (event.delta > 0 ? 0.95 : 1.05));
+    return false; // prevent page scroll outside panel
+  }
+
+  // ── Particle engine ─────────────────────────────────────────────────────────
+  // Particles are in 2D screen-space. World-space homes are re-projected each
+  // frame so they stay tethered to the terrain as view changes.
+  // Forces: spring-to-home + Brownian noise + optional gravity.
+  // Rendered on a native 2D canvas overlay — no WEBGL overhead per particle.
+
+  function buildParticles() {
+    if (!terrain.length) return;
+    const step = _lineStep;
+    let gr = 0;
+    for (let y = 0; y < cols; y += step) gr++;
+    const gc = rows;
+    const n  = gr * gc;
+
+    const reinit = (n !== particleCount || !particleX);
+    if (reinit) {
+      particleHomeW = new Float32Array(n * 3);
+      particleX     = new Float32Array(n);
+      particleY     = new Float32Array(n);
+      particleVX    = new Float32Array(n);
+      particleVY    = new Float32Array(n);
+    }
+
+    let i = 0;
+    for (let y = 0; y < cols; y += step) {
+      for (let x = 0; x < rows; x++, i++) {
+        const wx = x * scl, wy = y * scl, wz = terrain[x][y];
+        particleHomeW[i*3]   = wx;
+        particleHomeW[i*3+1] = wy;
+        particleHomeW[i*3+2] = wz;
+        if (reinit) {
+          const p = project3D(wx, wy, wz);
+          particleX[i] = p.x; particleY[i] = p.y;
+          particleVX[i] = 0;  particleVY[i] = 0;
+        }
+      }
+    }
+    particleCount    = n;
+    particleGridCols = gc;
+    particleGridRows = gr;
+    particlesDirty   = false;
+  }
+
+  function updateParticles() {
+    if (!particleCount) return;
+
+    // Precompute transform constants once — avoids repeated trig per particle
+    const rz   = radians(rotation), rx = radians(tiltDeg);
+    const cosZ = Math.cos(rz), sinZ = Math.sin(rz);
+    const cosX = Math.cos(rx), sinX = Math.sin(rx);
+    const camZ = (height / 2.0) / Math.tan(Math.PI / 6);
+    const hw   = heightmap.width  / 2 - offsetX;
+    const hh   = heightmap.height / 2 - offsetY;
+    const w2   = width / 2, h2 = height / 2;
+    const sp   = particleSpring, br = particleBrownian, da = particleDamping;
+    const grav = particleGravity;
+
+    for (let i = 0; i < particleCount; i++) {
+      let px = particleX[i],  py = particleY[i];
+      let vx = particleVX[i], vy = particleVY[i];
+
+      // Project world-space home → current screen position
+      const wi  = i * 3;
+      const tx  = particleHomeW[wi]   - hw,  ty  = particleHomeW[wi+1] - hh;
+      const wz  = particleHomeW[wi+2];
+      const ax  = tx*cosZ - ty*sinZ,          ay  = tx*sinZ + ty*cosZ;
+      const by  = ay*cosX - wz*sinX,          bz  = ay*sinX + wz*cosX;
+      const s   = camZ / (camZ - bz*zoom);
+      const hsx = w2 + ax*zoom*s,             hsy = h2 + by*zoom*s;
+
+      // Spring toward home
+      vx += (hsx - px) * sp;
+      vy += (hsy - py) * sp;
+
+      // Brownian noise
+      vx += (Math.random() - 0.5) * br;
+      vy += (Math.random() - 0.5) * br;
+
+      // Gravity
+      if (grav) vy += 0.8;
+
+      // Damping
+      vx *= da;  vy *= da;
+
+      particleX[i]  = px + vx;
+      particleY[i]  = py + vy;
+      particleVX[i] = vx;
+      particleVY[i] = vy;
+    }
+  }
+
+  function drawParticles2D() {
+    const ctx = particleCtx;
+    const GC = particleGridCols, GR = particleGridRows;
+    ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+
+    // ── Animated lines ─────────────────────────────────────────────────────────
+    if (drawLines && drawMode !== 'contours') {
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth   = strokeW;
+      ctx.lineCap     = 'round';
+      ctx.beginPath();
+
+      if (drawMode === 'lines-y') {
+        // Connect column-by-column
+        for (let col = 0; col < GC; col++) {
+          ctx.moveTo(particleX[col], particleY[col]);
+          for (let row = 1; row < GR; row++) {
+            ctx.lineTo(particleX[row * GC + col], particleY[row * GC + col]);
+          }
+        }
+      } else {
+        // Connect row-by-row (lines-x and curves)
+        for (let row = 0; row < GR; row++) {
+          const base = row * GC;
+          ctx.moveTo(particleX[base], particleY[base]);
+          for (let col = 1; col < GC; col++) {
+            ctx.lineTo(particleX[base + col], particleY[base + col]);
+          }
+        }
+      }
+      ctx.stroke();
+    }
+
+    // ── Animated points ────────────────────────────────────────────────────────
+    if (drawPoints) {
+      // Velocity trails — all in one batched path
+      if (particleTrails) {
+        ctx.strokeStyle = pointColor;
+        ctx.lineWidth   = Math.max(0.4, pointSize * 0.3);
+        ctx.beginPath();
+        for (let i = 0; i < particleCount; i++) {
+          const vx = particleVX[i], vy = particleVY[i];
+          if (vx*vx + vy*vy < 0.06) continue;
+          const px = particleX[i], py = particleY[i];
+          ctx.moveTo(px, py);
+          ctx.lineTo(px - vx * particleTrailLength, py - vy * particleTrailLength);
+        }
+        ctx.stroke();
+      }
+
+      // Dots — all in one batched fill
+      const r = Math.max(0.5, pointSize / 2);
+      ctx.fillStyle = pointColor;
+      ctx.beginPath();
+      for (let i = 0; i < particleCount; i++) {
+        const px = particleX[i], py = particleY[i];
+        ctx.moveTo(px + r, py);
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+  }
+
+  // ── Particle setters ─────────────────────────────────────────────────────────
+  function setParticlesActive(v) {
+    particlesActive = v;
+    g('particles-sw').checked = v;
+    g('particle-ctrl').classList.toggle('hidden', !v);
+    if (particleCanvas) particleCanvas.style.display = v ? '' : 'none';
+    if (!v && particleCtx) particleCtx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+    if (v && particlesDirty) buildParticles();
+    checkLoop();
+  }
+  function setParticleSpring(v) {
+    particleSpring = constrain(v / 1000, 0, 0.1);
+    g('pspring-sl').value = round(particleSpring * 1000);
+    g('pspring-v').textContent = particleSpring.toFixed(3);
+  }
+  function setParticleBrownian(v) {
+    particleBrownian = constrain(v / 10, 0, 3);
+    g('pbrown-sl').value = round(particleBrownian * 10);
+    g('pbrown-v').textContent = particleBrownian.toFixed(1);
+  }
+  function setParticleDamping(v) {
+    particleDamping = constrain(v / 100, 0.5, 0.99);
+    g('pdamp-sl').value = round(particleDamping * 100);
+    g('pdamp-v').textContent = particleDamping.toFixed(2);
+  }
+  function setParticleTrails(v) {
+    particleTrails = v;
+    g('ptrails-sw').checked = v;
+    g('ptraillen-ctrl').style.display = v ? '' : 'none';
+  }
+  function setParticleTrailLength(v) {
+    particleTrailLength = constrain(floor(v), 1, 30);
+    g('ptraillen-sl').value = particleTrailLength;
+    g('ptraillen-v').textContent = particleTrailLength;
+  }
+  function setParticleGravity(v) {
+    particleGravity = v;
+    g('pgravity-sw').checked = v;
+  }
+
+  // ── Levels / Histogram ───────────────────────────────────────────────────────
+  function computeHistogram() {
+    if (!heightmapPixels) return;
+    const bins = new Float32Array(256);
+    const px = heightmapPixels;
+    for (let i = 0; i < px.length; i += 4) bins[px[i]]++;
+    let maxCount = 0;
+    for (let i = 0; i < 256; i++) if (bins[i] > maxCount) maxCount = bins[i];
+    histogramData = new Float32Array(256);
+    if (maxCount > 0) for (let i = 0; i < 256; i++) histogramData[i] = Math.sqrt(bins[i] / maxCount);
+  }
+
+  function drawHistogram() {
+    const canvas = g('histogram-canvas');
+    if (!canvas || !histogramData) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, barH = canvas.height - 8;
+    ctx.clearRect(0, 0, W, canvas.height);
+
+    // Bars: dim outside [blackPoint, whitePoint], bright inside
+    const bw = W / 256;
+    for (let i = 0; i < 256; i++) {
+      const h = histogramData[i] * barH;
+      ctx.fillStyle = (i >= blackPoint && i <= whitePoint) ? '#71717a' : '#2d2d30';
+      ctx.fillRect(i * bw, barH - h, bw + 0.5, h);
+    }
+
+    // Gradient bar at bottom
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0, '#000');
+    grad.addColorStop(1, '#fff');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, barH, W, 8);
+
+    // Black point handle (blue)
+    const bx = blackPoint / 255 * W;
+    ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, canvas.height); ctx.stroke();
+
+    // White point handle (red)
+    const wx = whitePoint / 255 * W;
+    ctx.strokeStyle = '#f87171'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(wx, 0); ctx.lineTo(wx, canvas.height); ctx.stroke();
+  }
+
+  function setupHistogramInteraction() {
+    const canvas = g('histogram-canvas');
+    if (!canvas) return;
+    let dragging = null; // 'black' | 'white'
+    const valFromEvent = e => {
+      const rect = canvas.getBoundingClientRect();
+      return constrain(Math.round((e.clientX - rect.left) / rect.width * 255), 0, 255);
+    };
+    canvas.addEventListener('mousedown', e => {
+      const val = valFromEvent(e);
+      dragging = Math.abs(val - blackPoint) <= Math.abs(val - whitePoint) ? 'black' : 'white';
+    });
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      dragging === 'black' ? setBlackPoint(valFromEvent(e)) : setWhitePoint(valFromEvent(e));
+    });
+    window.addEventListener('mouseup', () => { dragging = null; });
+  }
+
+  function setBlackPoint(v) {
+    blackPoint = constrain(Math.floor(v), 0, whitePoint - 1);
+    g('black-sl').value = blackPoint;
+    g('black-v').textContent = blackPoint;
+    drawHistogram();
+    calcTerrain();
+  }
+  function setWhitePoint(v) {
+    whitePoint = constrain(Math.floor(v), blackPoint + 1, 255);
+    g('white-sl').value = whitePoint;
+    g('white-v').textContent = whitePoint;
+    drawHistogram();
+    calcTerrain();
+  }
+
+  // ── UI sync helpers ─────────────────────────────────────────────────────────
+  function syncSlider(id, slVal, dispVal) {
+    const s = g(id + '-sl'), d = g(id + '-v');
+    if (s) s.value = slVal;
+    if (d) d.textContent = dispVal;
+  }
+  function syncTilt() {
+    g('tilt-sl').value = tiltDeg;
+    g('tilt-v').textContent = tiltDeg + '°';
+  }
+  function syncRotation() {
+    const deg = (rotation % 360 + 360) % 360;
+    const v = g('rot-v'); if (v) v.textContent = deg.toFixed(0) + '°';
+    const s = g('rot-sl'); if (s) s.value = deg;
+  }
+  function syncAll() {
+    syncSlider('scl',    scl,    scl);
+    g('spacer-sl').value = linePx;
+    g('spacer-v').textContent = linePx + ' px';
+    syncSlider('shiftL', shiftLines, shiftLines);
+    syncSlider('shiftP', shiftPeaks, shiftPeaks);
+    syncSlider('contour', contourInterval, contourInterval);
+    g('elev-sl').value = round(elevScale * 10);
+    g('elev-v').textContent = elevScale.toFixed(1) + '×';
+    g('tightness-sl').value = round(tightness * 10);
+    g('tightness-v').textContent = tightness.toFixed(1);
+    syncTilt();
+    syncRotation();
+    syncSlider('stroke', strokeW, strokeW);
+    g('zoom-sl').value = round(zoom * 100);
+    g('zoom-v').textContent = round(zoom * 100) + '%';
+    setDrawMode(drawMode);
+    setDrawLines(drawLines);
+    setFill(drawFillMode);
+    setMesh(drawMesh);
+    setMeshStroke(drawMeshStroke);
+    setDrawPoints(drawPoints);
+    setLineColor(lineColor);
+    setPointColor(pointColor);
+    setPointSize(pointSize);
+    setRotating(rotating);
+    setBgColor(bgColor);
+    setLineGradient(lineGradient);
+    setLineColorHigh(lineColorHigh);
+    setStrokeByElev(strokeByElev);
+    setStrokeElevRange(strokeElevRange);
+    setSlopeOpacity(slopeOpacity);
+    setBlurRadius(blurRadius);
+    setHachureLength(hachureLength);
+    setPngScale(pngScale);
+    setRecordDuration(recordDuration);
+    setParticlesActive(particlesActive);
+    setParticleSpring(particleSpring * 1000);
+    setParticleBrownian(particleBrownian * 10);
+    setParticleDamping(particleDamping * 100);
+    setParticleTrails(particleTrails);
+    setParticleTrailLength(particleTrailLength);
+    setParticleGravity(particleGravity);
+    g('black-sl').value = blackPoint;
+    g('black-v').textContent = blackPoint;
+    g('white-sl').value = whitePoint;
+    g('white-v').textContent = whitePoint;
+    drawHistogram();
+  }
+
+  // ── Panel wiring ─────────────────────────────────────────────────────────────
+  function setupPanel() {
+    on('scl-sl',       'input', e => setScl(e.target.value));
+    on('spacer-sl',    'input', e => setLinePx(e.target.value));
+    on('shiftL-sl',    'input', e => setShiftLines(e.target.value));
+    on('shiftP-sl',    'input', e => setShiftPeaks(e.target.value));
+    on('tilt-sl',      'input', e => setTilt(parseInt(e.target.value)));
+    on('stroke-sl',    'input', e => setStrokeW(e.target.value));
+    on('tightness-sl', 'input', e => setTightness(parseInt(e.target.value)));
+    on('contour-sl',   'input', e => setContourInterval(e.target.value));
+    on('elev-sl',      'input', e => setElevScale(parseInt(e.target.value)));
+
+    on('rot-p',  'click', () => setRotation(rotation + 45));
+    on('rot-m',  'click', () => setRotation(rotation - 45));
+    on('rot-r',  'click', () => setRotation(0));
+    on('rot-sl', 'input', e => setRotation(parseInt(e.target.value)));
+
+    on('rotating-sw',    'change', e => setRotating(e.target.checked));
+    on('fill-sw',        'change', e => setFill(e.target.checked));
+    on('mesh-sw',        'change', e => setMesh(e.target.checked));
+    on('meshStroke-sw',  'change', e => setMeshStroke(e.target.checked));
+    on('drawlines-sw',   'change', e => setDrawLines(e.target.checked));
+    on('drawpoints-sw',  'change', e => setDrawPoints(e.target.checked));
+    on('linecolor-pick', 'input',  e => setLineColor(e.target.value));
+    on('pointcolor-pick','input',  e => setPointColor(e.target.value));
+    on('pointsize-sl',   'input',  e => setPointSize(e.target.value));
+
+    on('mode-lines-x',   'click', () => setDrawMode('lines-x'));
+    on('mode-lines-y',   'click', () => setDrawMode('lines-y'));
+    on('mode-curves',    'click', () => setDrawMode('curves'));
+    on('mode-crosshatch','click', () => setDrawMode('crosshatch'));
+    on('mode-hachure',   'click', () => setDrawMode('hachure'));
+    on('mode-contours',  'click', () => setDrawMode('contours'));
+
+    on('zoom-sl', 'input', e => setZoom(parseInt(e.target.value) / 100));
+
+    on('black-sl', 'input', e => setBlackPoint(e.target.value));
+    on('white-sl', 'input', e => setWhitePoint(e.target.value));
+    setupHistogramInteraction();
+
+    on('particles-sw',  'change', e => setParticlesActive(e.target.checked));
+    on('pspring-sl',    'input',  e => setParticleSpring(e.target.value));
+    on('pbrown-sl',     'input',  e => setParticleBrownian(e.target.value));
+    on('pdamp-sl',      'input',  e => setParticleDamping(e.target.value));
+    on('ptrails-sw',    'change', e => setParticleTrails(e.target.checked));
+    on('ptraillen-sl',  'input',  e => setParticleTrailLength(e.target.value));
+    on('pgravity-sw',   'change', e => setParticleGravity(e.target.checked));
+
+    on('reset-btn', 'click', resetAll);
+
+    makePanBtn('pan-u', () => { offsetY -= 10; markDirty(); });
+    makePanBtn('pan-d', () => { offsetY += 10; markDirty(); });
+    makePanBtn('pan-l', () => { offsetX -= 10; markDirty(); });
+    makePanBtn('pan-r', () => { offsetX += 10; markDirty(); });
+
+    on('exp-svg', 'click', exportSVG);
+    on('exp-dxf', 'click', exportDXF);
+    on('exp-png', 'click', exportHighResPNG);
+    on('pngscale-1', 'click', () => setPngScale(1));
+    on('pngscale-2', 'click', () => setPngScale(2));
+    on('pngscale-4', 'click', () => setPngScale(4));
+    on('exp-webm', 'click', () => recordingWebM ? stopRecording() : startRecording());
+    on('exp-preset-save', 'click', savePreset);
+    on('recdur-sl', 'input', e => setRecordDuration(e.target.value));
+    g('preset-input').addEventListener('change', function(e) {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => loadPreset(ev.target.result);
+      reader.readAsText(file);
+      this.value = ''; // allow re-loading same file
+    });
+    on('blur-sl',            'input',  e => setBlurRadius(e.target.value));
+    on('bgcolor-pick',       'input',  e => setBgColor(e.target.value));
+    on('linegradient-sw',    'change', e => setLineGradient(e.target.checked));
+    on('linecolor-high-pick','input',  e => setLineColorHigh(e.target.value));
+    on('strokebyelev-sw',    'change', e => setStrokeByElev(e.target.checked));
+    on('strokelev-sl',       'input',  e => setStrokeElevRange(e.target.value));
+    on('slopeopacity-sw',    'change', e => setSlopeOpacity(e.target.checked));
+    on('hachure-sl',         'input',  e => setHachureLength(e.target.value));
+
+    g('img-input').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => loadImage(ev.target.result, img => { heightmap = img; initHeightmap(); });
+      reader.readAsDataURL(file);
+    });
+
+    syncAll();
+  }
+
+  function makePanBtn(id, fn) {
+    let tid;
+    const el = g(id);
+    const start = () => { fn(); tid = setInterval(fn, 80); };
+    const stop  = () => clearInterval(tid);
+    el.addEventListener('mousedown',  start);
+    el.addEventListener('mouseup',    stop);
+    el.addEventListener('mouseleave', stop);
+  }
+
+  let panelCollapsed = false;
+  function togglePanel() {
+    panelCollapsed = !panelCollapsed;
+    g('panel').classList.toggle('collapsed', panelCollapsed);
+    g('tab-arrow').textContent = panelCollapsed ? '▶' : '◀';
+  }
+
+  // ── Key controls ─────────────────────────────────────────────────────────────
+  function keyPressed() {
+    const active = document.activeElement;
+    if (active && active.tagName === 'INPUT') return true;
+
+    switch (key) {
+      case 'q': setRotating(!rotating);                break;
+      case 'w': offsetY -= 10; markDirty();            break;
+      case 's': offsetY += 10; markDirty();            break;
+      case 'a': offsetX -= 10; markDirty();            break;
+      case 'd': offsetX += 10; markDirty();            break;
+      case 'y': setTilt(tiltDeg - 1);                  break;
+      case 'x': setTilt(tiltDeg + 1);                  break;
+      case 'k': setScl(scl + 1);                       break;
+      case 'i': setScl(scl - 1);                       break;
+      case 'j': setLinePx(linePx + scl);               break;
+      case 'l': setLinePx(linePx - scl);               break;
+      case 'm': setMesh(!drawMesh);                    break;
+      case 'o': setMeshStroke(!drawMeshStroke);        break;
+      case 'b': setStrokeW(strokeW + 1);               break;
+      case 'n': setStrokeW(strokeW - 1);               break;
+      case 'p': setFill(!drawFillMode);                break;
+      case 't': setRotation(0);                        break;
+      case 'e': setRotation(rotation + 45);            break;
+      case 'f': {
+        const cycle = { 'lines-x':'lines-y', 'lines-y':'curves', 'curves':'crosshatch',
+                        'crosshatch':'hachure', 'hachure':'contours', 'contours':'lines-x' };
+        setDrawMode(cycle[drawMode] || 'lines-x');
+        break;
+      }
+      case '1': exportSVG();          break;
+      case '2': exportDXF();          break;
+      case '3': exportHighResPNG();   break;
+    }
+
+    if (keyCode === UP_ARROW)    setShiftLines(shiftLines + 1);
+    if (keyCode === DOWN_ARROW)  setShiftLines(shiftLines - 1);
+    if (keyCode === LEFT_ARROW)  setShiftPeaks(shiftPeaks + 1);
+    if (keyCode === RIGHT_ARROW) setShiftPeaks(shiftPeaks - 1);
+
+    return false;
+  }
+
+  // ── 3D → 2D projection for vector exports ────────────────────────────────────
+  function project3D(vx, vy, vz) {
+    const tx = vx - heightmap.width  / 2 + offsetX;
+    const ty = vy - heightmap.height / 2 + offsetY;
+
+    const rz = radians(rotation);
+    const ax = tx * cos(rz) - ty * sin(rz);
+    const ay = tx * sin(rz) + ty * cos(rz);
+
+    const rx = radians(tiltDeg);
+    const bx =  ax;
+    const by =  ay * cos(rx) - vz * sin(rx);
+    const bz =  ay * sin(rx) + vz * cos(rx);
+
+    // Apply zoom: matches scale(zoom) applied before the rotations in draw()
+    const zbx = bx * zoom, zby = by * zoom, zbz = bz * zoom;
+    const camZ = (height / 2.0) / tan(PI / 6);
+    const s = camZ / (camZ - zbz);
+    return { x: width / 2 + zbx * s, y: height / 2 + zby * s };
+  }
+
+  // ── Change 5: Visibility-aware ridgeline SVG export ───────────────────────
+  // Horizon algorithm: tracks the minimum screen-Y reached by front rows at each
+  // screen column. A back-row segment is visible only if it projects ABOVE that
+  // horizon (lower screen-Y = higher on screen = not occluded by the white wall).
+  //
+  // horizon[x] = min screen-Y of terrain surface from all closer rows so far.
+  // A point p is visible iff p.y < horizon[round(p.x)].
+  // Process order: front rows first (to build horizon), emit back-to-front (painter's).
+  // Works for both lines-x (outer = y rows, inner = x) and lines-y (outer = x cols, inner = y).
+  function svgRidgelinesOccluded(out) {
+    // For crosshatch: run the horizon algorithm twice (X then Y)
+    if (drawMode === 'crosshatch') {
+      const savedMode = drawMode;
+      drawMode = 'lines-x'; svgRidgelinesOccluded(out);
+      drawMode = 'lines-y'; svgRidgelinesOccluded(out);
+      drawMode = savedMode;
+      return;
+    }
+    const W = ceil(width);
+    const horizon = new Float32Array(W).fill(1e9);
+    const isY = drawMode === 'lines-y';
+    const outerCount = isY ? rows : cols;
+    const innerCount = isY ? cols : rows;
+
+    // Determine front: sample the middle of first vs last outer line
+    const mid = floor(innerCount / 2);
+    const projOuter = (outer, inner) => {
+      const x = isY ? outer : inner;
+      const y = isY ? inner : outer;
+      return project3D(x * scl, y * scl, terrain[x][y]);
+    };
+    const pFront = projOuter(outerCount - 1, mid);
+    const pBack  = projOuter(0,              mid);
+    const frontIsHighIdx = pFront.y > pBack.y;
+
+    const outerIdxs = [];
+    for (let o = 0; o < outerCount; o += _lineStep) outerIdxs.push(o);
+    const ftbOrder = frontIsHighIdx ? [...outerIdxs].reverse() : outerIdxs;
+
+    const segMap = new Map();
+    for (const outer of ftbOrder) {
+      const pts = [];
+      for (let inner = 0; inner < innerCount; inner++) {
+        pts.push(projOuter(outer, inner));
+      }
+
+      const segs = [];
+      for (let inner = 0; inner < innerCount - 1; inner++) {
+        const a = pts[inner], b = pts[inner + 1];
+        const ax = constrain(round(a.x), 0, W - 1);
+        const bx = constrain(round(b.x), 0, W - 1);
+        if (a.y < horizon[ax] || b.y < horizon[bx]) segs.push({ a, b });
+      }
+      segMap.set(outer, segs);
+
+      // Update horizon
+      for (let inner = 0; inner < innerCount - 1; inner++) {
+        const a = pts[inner], b = pts[inner + 1];
+        const ax = constrain(round(a.x), 0, W - 1);
+        const bx = constrain(round(b.x), 0, W - 1);
+        const steps = abs(bx - ax) + 1;
+        for (let i = 0; i <= steps; i++) {
+          const t  = steps > 1 ? i / (steps - 1) : 0;
+          const hx = constrain(round(a.x + t * (b.x - a.x)), 0, W - 1);
+          const hy = a.y + t * (b.y - a.y);
+          if (hy < horizon[hx]) horizon[hx] = hy;
+        }
+      }
+    }
+
+    const btfOrder = [...ftbOrder].reverse();
+    for (const outer of btfOrder) {
+      let d = '';
+      for (const { a, b } of (segMap.get(outer) || [])) {
+        d += `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
+      }
+      if (d) out.push(`<path d="${d}"/>`);
+    }
+  }
+
+  // ── SVG export ────────────────────────────────────────────────────────────────
+  function exportSVG() {
+    const anyEffect = lineGradient || strokeByElev || slopeOpacity;
+    const out = [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`,
+      `<rect width="${width}" height="${height}" fill="${bgColor}"/>`,
+      anyEffect
+        ? `<g fill="none" stroke-linecap="round">`
+        : `<g stroke="${lineColor}" stroke-width="${strokeW}" fill="none" stroke-linecap="round">`
+    ];
+
+    if (particlesActive && particleCount) {
+      // Animation active — export current particle screen positions directly
+      const GC = particleGridCols, GR = particleGridRows;
+      if (drawLines && drawMode !== 'contours') {
+        if (drawMode === 'lines-y') {
+          for (let col = 0; col < GC; col++) {
+            const pts = [];
+            for (let row = 0; row < GR; row++)
+              pts.push(`${f(particleX[row*GC+col])},${f(particleY[row*GC+col])}`);
+            if (pts.length > 1) out.push(`<path d="M${pts.join('L')}"/>`);
+          }
+        } else {
+          for (let row = 0; row < GR; row++) {
+            const base = row * GC, pts = [];
+            for (let col = 0; col < GC; col++)
+              pts.push(`${f(particleX[base+col])},${f(particleY[base+col])}`);
+            if (pts.length > 1) out.push(`<path d="M${pts.join('L')}"/>`);
+          }
+        }
+      }
+      out.push('</g>');
+      if (drawPoints) {
+        const r = f(pointSize / 2);
+        out.push(`<g fill="${pointColor}" stroke="none">`);
+        for (let i = 0; i < particleCount; i++)
+          out.push(`<circle cx="${f(particleX[i])}" cy="${f(particleY[i])}" r="${r}"/>`);
+        out.push('</g>');
+      }
+    } else {
+      if (drawLines) {
+        if (drawMode === 'contours') {
+          // Contour export: project all cached segments (no horizon applied — on-surface by definition)
+          if (contourDirty) buildContourCache();
+          const cv = contourGeomPts;
+          for (let i = 0; i < cv.length; i += 6) {
+            const a = project3D(cv[i],   cv[i+1], cv[i+2]);
+            const b = project3D(cv[i+3], cv[i+4], cv[i+5]);
+            out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
+          }
+        } else if (drawMode === 'lines-x' || drawMode === 'lines-y' || drawMode === 'crosshatch') {
+          svgRidgelinesOccluded(out);
+        } else if (drawMode === 'hachure') {
+          if (hachureDirty) buildHachureCache();
+          if (hachureGeomPts) {
+            for (let i = 0; i < hachureGeomPts.length; i += 7) {
+              const a = project3D(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
+              const b = project3D(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
+              out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
+            }
+          }
+        } else {
+          // Curves mode: project x-direction points per row, emit polylines
+          for (let y = 0; y < cols; y += _lineStep) {
+            const pts = [];
+            for (let x = 0; x < rows - 1; x++) {
+              const p = project3D(x * scl, y * scl, terrain[x][y]);
+              pts.push(`${f(p.x)},${f(p.y)}`);
+            }
+            if (pts.length) out.push(`<path d="M${pts.join('L')}"/>`);
+          }
+        }
+      }
+      out.push('</g>');
+      // Point circles — same projected positions as the 3D preview
+      if (drawPoints) {
+        out.push(`<g fill="${pointColor}" stroke="none">`);
+        const r = f(pointSize / 2);
+        if (drawMode === 'contours') {
+          if (contourDirty) buildContourCache();
+          for (let i = 0; i < contourGeomPts.length; i += 3) {
+            const p = project3D(contourGeomPts[i], contourGeomPts[i+1], contourGeomPts[i+2]);
+            out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}"/>`);
+          }
+        } else {
+          const isY = drawMode === 'lines-y';
+          const outerCount = isY ? rows : cols;
+          const innerCount = isY ? cols : rows;
+          for (let outer = 0; outer < outerCount; outer += _lineStep) {
+            for (let inner = 0; inner < innerCount; inner++) {
+              const x = isY ? outer : inner, y = isY ? inner : outer;
+              const p = project3D(x * scl, y * scl, terrain[x][y]);
+              out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}"/>`);
+            }
+          }
+        }
+        out.push('</g>');
+      }
+    }
+
+    out.push('</svg>');
+    download(out.join('\n'), timestamp('svg'), 'image/svg+xml');
+  }
+
+  // ── High-res PNG export ───────────────────────────────────────────────────────
+  function exportHighResPNG() {
+    if (pngScale === 1) { saveCanvas(timestamp('png').slice(0,-4), 'png'); return; }
+    const origW = width, origH = height, origZoom = zoom;
+    zoom *= pngScale;
+    resizeCanvas(origW * pngScale, origH * pngScale);
+    if (particleCanvas)  { particleCanvas.width  = origW*pngScale; particleCanvas.height  = origH*pngScale; }
+    if (compositeCanvas) { compositeCanvas.width = origW*pngScale; compositeCanvas.height = origH*pngScale; }
+    redraw();
+    saveCanvas(timestamp('png').slice(0,-4), 'png');
+    zoom = origZoom;
+    resizeCanvas(origW, origH);
+    if (particleCanvas)  { particleCanvas.width  = origW; particleCanvas.height  = origH; }
+    if (compositeCanvas) { compositeCanvas.width = origW; compositeCanvas.height = origH; }
+    markDirty();
+  }
+
+  // ── Preset save / load ────────────────────────────────────────────────────────
+  function savePreset() {
+    const s = {
+      scl, linePx, shiftLines, shiftPeaks, tiltDeg, rotation, zoom, offsetX, offsetY, strokeW,
+      drawMesh, drawMeshStroke, drawFillMode, drawLines, drawPoints, lineColor, pointColor, pointSize,
+      drawMode, tightness, contourInterval, elevScale, blackPoint, whitePoint,
+      bgColor, lineGradient, lineColorHigh, strokeByElev, strokeElevRange,
+      slopeOpacity, blurRadius, hachureLength, pngScale, recordDuration,
+      particlesActive, particleSpring, particleBrownian, particleDamping,
+      particleTrails, particleTrailLength, particleGravity
+    };
+    download(JSON.stringify(s, null, 2), timestamp('json'), 'application/json');
+  }
+  function loadPreset(json) {
+    try {
+      const s = JSON.parse(json);
+      const sv = (k, def) => s[k] != null ? s[k] : def;
+      offsetX = sv('offsetX', 0); offsetY = sv('offsetY', 0);
+      setScl(sv('scl', 5));
+      setLinePx(sv('linePx', 5));
+      setShiftLines(sv('shiftLines', 0));
+      setShiftPeaks(sv('shiftPeaks', 0));
+      setTilt(sv('tiltDeg', 51));
+      setRotation(sv('rotation', 0));
+      setRotating(sv('rotating', false));
+      setZoom(sv('zoom', 1));
+      setStrokeW(sv('strokeW', 1));
+      setDrawMode(sv('drawMode', 'lines-x'));
+      setTightness(sv('tightness', 3.5) * 10);
+      setContourInterval(sv('contourInterval', 5));
+      setElevScale(sv('elevScale', 1) * 10);
+      setBlackPoint(sv('blackPoint', 0));
+      setWhitePoint(sv('whitePoint', 255));
+      setDrawLines(sv('drawLines', true));
+      setFill(sv('drawFillMode', false));
+      setMesh(sv('drawMesh', false));
+      setMeshStroke(sv('drawMeshStroke', true));
+      setDrawPoints(sv('drawPoints', false));
+      setLineColor(sv('lineColor', '#000000'));
+      setPointColor(sv('pointColor', '#e63535'));
+      setPointSize(sv('pointSize', 4));
+      setBgColor(sv('bgColor', '#ffffff'));
+      setLineGradient(sv('lineGradient', false));
+      setLineColorHigh(sv('lineColorHigh', '#ff6600'));
+      setStrokeByElev(sv('strokeByElev', false));
+      setStrokeElevRange(sv('strokeElevRange', 3));
+      setSlopeOpacity(sv('slopeOpacity', false));
+      setBlurRadius(sv('blurRadius', 0));
+      setHachureLength(sv('hachureLength', 10));
+      setPngScale(sv('pngScale', 1));
+      setRecordDuration(sv('recordDuration', 4));
+      setParticlesActive(sv('particlesActive', false));
+      setParticleSpring(sv('particleSpring', 0.008) * 1000);
+      setParticleBrownian(sv('particleBrownian', 0.4) * 10);
+      setParticleDamping(sv('particleDamping', 0.88) * 100);
+      setParticleTrails(sv('particleTrails', true));
+      setParticleTrailLength(sv('particleTrailLength', 6));
+      setParticleGravity(sv('particleGravity', false));
+    } catch(e) { console.error('Invalid preset:', e); }
+  }
+
+  // ── WebM recording ────────────────────────────────────────────────────────────
+  function startRecording() {
+    if (!compositeCanvas) return;
+    recordingWebM = true;
+    compositeCanvas.width = windowWidth; compositeCanvas.height = windowHeight;
+    const stream   = compositeCanvas.captureStream(30);
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm';
+    mediaRecorder  = new MediaRecorder(stream, { mimeType });
+    recordChunks   = [];
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      recordingWebM = false;
+      const blob = new Blob(recordChunks, { type: 'video/webm' });
+      const a = Object.assign(document.createElement('a'),
+        { href: URL.createObjectURL(blob), download: timestamp('webm') });
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      g('exp-webm').innerHTML = 'WebM<span class="hint" id="webm-hint">record</span>';
+      checkLoop();
+    };
+    mediaRecorder.start(100);
+    loop(); // ensure animation runs for recording even when static
+    g('exp-webm').innerHTML = 'Stop<span class="hint" id="webm-hint">' + recordDuration + 's</span>';
+    setTimeout(() => stopRecording(), recordDuration * 1000);
+  }
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  }
+
+  // ── DXF export ────────────────────────────────────────────────────────────────
+  function exportDXF() {
+    const out = ['0\nSECTION\n2\nENTITIES'];
+
+    if (drawMode === 'contours') {
+      if (contourDirty) buildContourCache();
+      const cv = contourGeomPts;
+      for (let i = 0; i < cv.length; i += 6) {
+        const a = project3D(cv[i],   cv[i+1], cv[i+2]);
+        const b = project3D(cv[i+3], cv[i+4], cv[i+5]);
+        out.push(`0\nLINE\n8\n0\n10\n${f4(a.x)}\n20\n${f4(a.y)}\n30\n0\n11\n${f4(b.x)}\n21\n${f4(b.y)}\n31\n0`);
+      }
+    } else {
+      // lines-x, lines-y, curves — all export as projected line segments
+      const isY = drawMode === 'lines-y';
+      const outerCount = isY ? rows : cols;
+      const innerCount = isY ? cols : rows;
+      for (let outer = 0; outer < outerCount; outer += _lineStep) {
+        for (let inner = 0; inner < innerCount - 1; inner++) {
+          const x0 = isY ? outer : inner,     y0 = isY ? inner : outer;
+          const x1 = isY ? outer : inner + 1, y1 = isY ? inner + 1 : outer;
+          const a = project3D(x0 * scl, y0 * scl, terrain[x0][y0]);
+          const b = project3D(x1 * scl, y1 * scl, terrain[x1][y1]);
+          out.push(`0\nLINE\n8\n0\n10\n${f4(a.x)}\n20\n${f4(a.y)}\n30\n0\n11\n${f4(b.x)}\n21\n${f4(b.y)}\n31\n0`);
+        }
+      }
+    }
+
+    out.push('0\nENDSEC\n0\nEOF');
+    download(out.join('\n'), timestamp('dxf'), 'application/octet-stream');
+  }
+
+  // ── Reset all to defaults ────────────────────────────────────────────────────
+  const DEFAULTS = {
+    scl: 5, linePx: 5, shiftLines: 0, shiftPeaks: 0,
+    tiltDeg: 51, rotation: 0, rotating: false,
+    zoom: 1.0, offsetX: 0, offsetY: 0, strokeW: 1,
+    drawMesh: false, drawMeshStroke: true, drawFillMode: false, drawLines: true,
+    drawPoints: false, lineColor: '#000000', pointColor: '#e63535', pointSize: 4,
+    drawMode: 'lines-x', tightness: 3.5, contourInterval: 5, elevScale: 1.0,
+    blackPoint: 0, whitePoint: 255,
+    bgColor: '#ffffff', lineGradient: false, lineColorHigh: '#ff6600',
+    strokeByElev: false, strokeElevRange: 3, slopeOpacity: false,
+    blurRadius: 0, hachureLength: 10, pngScale: 1, recordDuration: 4,
+    particlesActive: false, particleSpring: 0.008, particleBrownian: 0.4,
+    particleDamping: 0.88, particleTrails: true, particleTrailLength: 6, particleGravity: false
+  };
+
+  function resetAll() {
+    offsetX = DEFAULTS.offsetX; offsetY = DEFAULTS.offsetY;
+    setScl(DEFAULTS.scl);
+    setLinePx(DEFAULTS.linePx);
+    setShiftLines(DEFAULTS.shiftLines);
+    setShiftPeaks(DEFAULTS.shiftPeaks);
+    setTilt(DEFAULTS.tiltDeg);
+    setRotation(DEFAULTS.rotation);
+    setRotating(DEFAULTS.rotating);
+    setZoom(DEFAULTS.zoom);
+    setStrokeW(DEFAULTS.strokeW);
+    setDrawMode(DEFAULTS.drawMode);
+    setTightness(DEFAULTS.tightness * 10);
+    setContourInterval(DEFAULTS.contourInterval);
+    setElevScale(DEFAULTS.elevScale * 10);
+    setBlackPoint(DEFAULTS.blackPoint);
+    setWhitePoint(DEFAULTS.whitePoint);
+    setDrawLines(DEFAULTS.drawLines);
+    setFill(DEFAULTS.drawFillMode);
+    setMesh(DEFAULTS.drawMesh);
+    setMeshStroke(DEFAULTS.drawMeshStroke);
+    setDrawPoints(DEFAULTS.drawPoints);
+    setLineColor(DEFAULTS.lineColor);
+    setPointColor(DEFAULTS.pointColor);
+    setPointSize(DEFAULTS.pointSize);
+    setBgColor(DEFAULTS.bgColor);
+    setLineGradient(DEFAULTS.lineGradient);
+    setLineColorHigh(DEFAULTS.lineColorHigh);
+    setStrokeByElev(DEFAULTS.strokeByElev);
+    setStrokeElevRange(DEFAULTS.strokeElevRange);
+    setSlopeOpacity(DEFAULTS.slopeOpacity);
+    setBlurRadius(DEFAULTS.blurRadius);
+    setHachureLength(DEFAULTS.hachureLength);
+    setPngScale(DEFAULTS.pngScale);
+    setRecordDuration(DEFAULTS.recordDuration);
+    setParticlesActive(DEFAULTS.particlesActive);
+    setParticleSpring(DEFAULTS.particleSpring * 1000);
+    setParticleBrownian(DEFAULTS.particleBrownian * 10);
+    setParticleDamping(DEFAULTS.particleDamping * 100);
+    setParticleTrails(DEFAULTS.particleTrails);
+    setParticleTrailLength(DEFAULTS.particleTrailLength);
+    setParticleGravity(DEFAULTS.particleGravity);
+  }
+
+  // ── Utils ──────────────────────────────────────────────────────────────────────
+  const f  = n => n.toFixed(2);
+  const f4 = n => n.toFixed(4);
+  const g  = id => document.getElementById(id);
+  const on = (id, ev, fn) => g(id).addEventListener(ev, fn);
+
+  function timestamp(ext) {
+    const d = new Date();
+    return `heightmap_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.${ext}`;
+  }
+  function pad(n) { return String(n).padStart(2, '0'); }
+
+  function download(content, name, type) {
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([content], { type })),
+      download: name
+    });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+  </script>
+</body>
+</html>
