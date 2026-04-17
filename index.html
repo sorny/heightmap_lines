@@ -2028,7 +2028,11 @@
     on('ptraillen-sl',  'input',  e => setParticleTrailLength(e.target.value));
     on('pgravity-sw',   'change', e => setParticleGravity(e.target.checked));
 
-    on('reset-btn', 'click', resetAll);
+    on('reset-btn', 'click', () => {
+      showLoading('Resetting…');
+      // rAF + setTimeout lets the browser paint the spinner before sync work runs
+      requestAnimationFrame(() => setTimeout(() => { resetAll(); hideLoading(); }, 0));
+    });
 
     makePanBtn('pan-u', () => { offsetY -= 10; markDirty(); });
     makePanBtn('pan-d', () => { offsetY += 10; markDirty(); });
@@ -2074,8 +2078,14 @@
     g('img-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
+      showLoading('Loading heightmap…');
       const reader = new FileReader();
-      reader.onload = ev => loadImage(ev.target.result, img => { heightmap = img; initHeightmap(); setHeightmapName(file.name); });
+      reader.onload = ev => loadImage(ev.target.result, img => {
+        hideLoading();
+        heightmap = img;
+        initHeightmap();
+        setHeightmapName(file.name);
+      });
       reader.readAsDataURL(file);
     });
 
@@ -2446,16 +2456,21 @@
     setShowGrid(sv('showGrid', false));
   }
 
+  function showLoading(msg) {
+    g('loading-msg').textContent = msg || 'Loading…';
+    g('loading-overlay').classList.add('active');
+  }
+  function hideLoading() {
+    g('loading-overlay').classList.remove('active');
+  }
+
   function loadPreset(json) {
     try {
       const s = JSON.parse(json);
       if (s.heightmap) {
-        // Show loading overlay while the embedded heightmap is decoding
-        const overlay = g('loading-overlay');
-        g('loading-msg').textContent = 'Loading preset…';
-        overlay.classList.add('active');
+        showLoading('Loading preset…');
         loadImage(s.heightmap, img => {
-          overlay.classList.remove('active');
+          hideLoading();
           heightmap = img;
           initHeightmap();
           applyPresetSettings(s);
