@@ -1043,6 +1043,9 @@
     const outerCount = isY ? rows : cols;
     const innerCount = isY ? cols : rows;
     const step = _lineStep;
+    // Wall bottom must stay below the terrain minimum so the geometry never
+    // inverts (top < bottom) at high elevation scales.
+    const wallBottom = terrainMinZ - 1;
     for (let outer = 0; outer < outerCount; outer += step) {
       const pts  = new Float32Array(innerCount * 3);
       const wall = new Float32Array(innerCount * 6);
@@ -1052,7 +1055,7 @@
         pts[pi]   = x * scl; pts[pi+1] = y * scl; pts[pi+2] = terrain[x][y] + Z_LIFT;
         const wi = inner * 6;
         wall[wi]   = x * scl; wall[wi+1] = y * scl; wall[wi+2] = terrain[x][y];
-        wall[wi+3] = x * scl; wall[wi+4] = y * scl; wall[wi+5] = -60;
+        wall[wi+3] = x * scl; wall[wi+4] = y * scl; wall[wi+5] = wallBottom;
       }
       rowPts.push(pts); wallPts.push(wall);
     }
