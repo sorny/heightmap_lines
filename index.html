@@ -1654,9 +1654,10 @@
     const s = elevGradient[_selStop];
     g('grad-stop-color').value = s.color;
     g('grad-stop-pos').textContent = Math.round(s.pos * 100) + '%';
-    const canDel = elevGradient.length > 2;
-    g('grad-stop-del').disabled = !canDel;
-    g('grad-stop-del').style.opacity = canDel ? '1' : '0.3';
+    const sorted = [...elevGradient].sort((a,b) => a.pos - b.pos);
+    const isAnchor = s === sorted[0] || s === sorted[sorted.length - 1];
+    const canDel = elevGradient.length > 2 && !isAnchor;
+    g('grad-stop-del').style.display = isAnchor ? 'none' : '';
   }
   function handleStopDrag(e) {
     e.preventDefault();
