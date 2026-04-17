@@ -59,7 +59,7 @@
     .sec-title {
       font-size: 9px; font-weight: 600;
       letter-spacing: 1.8px; text-transform: uppercase;
-      color: #52525b; margin-bottom: 12px;
+      color: #71717a; margin-bottom: 12px;
       cursor: pointer; user-select: none;
       display: flex; justify-content: space-between; align-items: center;
     }
@@ -83,7 +83,7 @@
       margin-bottom: 5px;
     }
     .ctrl-head span { font-size: 12px; color: #d4d4d8; }
-    .sc { font-size: 10px; color: #3f3f46; }
+    .sc { font-size: 10px; color: #71717a; }
 
     /* ── Two-column toggle grid ──────────────────────────────────────────── */
     .tog-grid {
@@ -209,7 +209,7 @@
       cursor: pointer; font-size: 11px; font-weight: 600;
       transition: background .1s, border-color .1s;
     }
-    .exp-btn .hint { display: block; font-size: 9px; color: #3f3f46; font-weight: 400; margin-top: 2px; }
+    .exp-btn .hint { display: block; font-size: 9px; color: #71717a; font-weight: 400; margin-top: 2px; }
     .exp-btn:hover { background: #3b82f6; border-color: #3b82f6; color: #fff; }
     .exp-btn:hover .hint { color: rgba(255,255,255,.5); }
 
@@ -262,21 +262,26 @@
     /* ── Loading overlay ─────────────────────────────────────────────────── */
     #loading-overlay {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.55);
+      background: rgba(0,0,0,0.65);
       display: none; align-items: center; justify-content: center;
-      z-index: 100; flex-direction: column; gap: 14px;
+      z-index: 100;
     }
     #loading-overlay.active { display: flex; }
+    #loading-card {
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+      background: #18181b; border: 1px solid #3f3f46; border-radius: 10px;
+      padding: 28px 36px;
+    }
     .spinner {
       width: 32px; height: 32px;
-      border: 3px solid rgba(255,255,255,0.15);
+      border: 3px solid rgba(255,255,255,0.12);
       border-top-color: #3b82f6;
       border-radius: 50%;
       animation: spin .7s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     #loading-overlay span {
-      font-size: 12px; color: #a1a1aa;
+      font-size: 14px; color: #e4e4e7;
       font-family: system-ui, -apple-system, sans-serif;
     }
 
@@ -310,7 +315,7 @@
 
   <div id="info-overlay"></div>
   <div id="grid-overlay"></div>
-  <div id="loading-overlay"><div class="spinner"></div><span id="loading-msg">Loading…</span></div>
+  <div id="loading-overlay"><div id="loading-card"><div class="spinner"></div><span id="loading-msg">Loading…</span></div></div>
 
   <!-- ── Right panel ─────────────────────────────────────────────────────── -->
   <div id="panel">
@@ -647,7 +652,7 @@
             <span id="grad-stop-pos" style="font-size:10px;color:#71717a;flex:1;text-align:center">0%</span>
             <button id="grad-stop-del" class="act-btn" style="padding:3px 8px;font-size:13px;line-height:1">×</button>
           </div>
-          <p style="font-size:9px;color:#3f3f46;margin:0 0 2px">Click bar to add stop • drag handle to move</p>
+          <p style="font-size:9px;color:#71717a;margin:0 0 2px">Click bar to add stop • drag handle to move</p>
         </div>
 
         <!-- Weight by elevation and Opacity by slope side by side -->
@@ -968,24 +973,23 @@
     translate(-heightmap.width / 2 + offsetX, -heightmap.height / 2 + offsetY, 0);
 
     if (drawMesh) {
-      drawMeshStroke ? stroke(0) : noStroke();
       strokeWeight(1);
       const meshGrad = drawFillMode && lineGradient && _gradLUT;
+      const meshCut  = elevCutMin > 0 || elevCutMax < 1;
       if (!drawFillMode) noFill();
+      if (!meshCut) { drawMeshStroke ? stroke(0) : noStroke(); }
       for (let y = 0; y < cols - 1; y += _lineStep) {
         beginShape(TRIANGLE_STRIP);
         for (let x = 0; x < rows; x++) {
           const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
-          if (meshGrad) {
-            const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
-            fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
-          } else if (drawFillMode) { fill(255); }
-          vertex(x * scl, y * scl, z1);
-          if (meshGrad) {
-            const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
-            fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
-          } else if (drawFillMode) { fill(255); }
-          vertex(x * scl, (y+1) * scl, z2);
+          for (const [z, sy] of [[z1, y * scl], [z2, min(y+1, cols-1) * scl]]) {
+            const cut = meshCut && !inElevCutRange(z);
+            if (meshCut) drawMeshStroke ? stroke(cut ? rgbBg[0] : 0, cut ? rgbBg[1] : 0, cut ? rgbBg[2] : 0) : noStroke();
+            if (cut) { if (drawFillMode) fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+            else if (meshGrad) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(z) * 255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+            else if (drawFillMode) { fill(255); }
+            vertex(x * scl, sy, z);
+          }
         }
         endShape();
       }
@@ -1174,7 +1178,7 @@
         const wallGrad = drawFillMode && lineGradient && _gradLUT;
         beginShape(TRIANGLE_STRIP);
         for (let i = 0; i < wall.length; i += 3) {
-          if (wallGrad) {
+          if (wallGrad && inElevCutRange(wall[i+2])) {
             const wi = Math.min(255, Math.max(0, Math.round(normalizeElevation(wall[i+2]) * 255)));
             fill(_gradLUT[wi*3], _gradLUT[wi*3+1], _gradLUT[wi*3+2]);
           } else {
@@ -1255,15 +1259,11 @@
       beginShape(TRIANGLE_STRIP);
       for (let x = 0; x < rows; x++) {
         const z1 = terrain[x][y], z2 = terrain[x][y+1];
-        if (surfGrad) {
-          const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
-          fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
-        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, y * scl, z1);
-        if (surfGrad) {
-          const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
-          fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
-        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, (y+1) * scl, z2);
       }
       endShape();
@@ -1329,15 +1329,11 @@
       beginShape(TRIANGLE_STRIP);
       for (let x = 0; x < rows; x++) {
         const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
-        if (surfGrad) {
-          const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255)));
-          fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]);
-        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, y * scl, z1);
-        if (surfGrad) {
-          const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255)));
-          fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]);
-        } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, (y+1) * scl, z2);
       }
       endShape();
