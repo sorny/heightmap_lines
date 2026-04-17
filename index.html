@@ -2295,7 +2295,17 @@
     return { x: width / 2 + zbx * s, y: height / 2 + zby * s };
   }
 
-  // ── Change 5: Visibility-aware ridgeline SVG export ───────────────────────
+  // Returns SVG stroke/width/opacity attrs matching the canvas getRowStroke logic.
+  function svgStrokeStyle(z, slope) {
+    const [cr, cg, cb, ca] = getRowStroke(z, slope);
+    const sw = getRowStrokeWeight(z);
+    let s = `stroke="${rgbToHex(cr, cg, cb)}"`;
+    if (ca < 255) s += ` stroke-opacity="${(ca / 255).toFixed(3)}"`;
+    if (sw !== strokeW) s += ` stroke-width="${f(sw)}"`;
+    return s;
+  }
+
+  // ── Visibility-aware ridgeline SVG export ─────────────────────────────────
   // Horizon algorithm: tracks the minimum screen-Y reached by front rows at each
   // screen column. A back-row segment is visible only if it projects ABOVE that
   // horizon (lower screen-Y = higher on screen = not occluded by the white wall).
@@ -2371,13 +2381,32 @@
       }
     }
 
+    const anyEff = lineGradient || strokeByElev || slopeOpacity;
     const btfOrder = [...ftbOrder].reverse();
     for (const outer of btfOrder) {
       let d = '';
       for (const { a, b } of (segMap.get(outer) || [])) {
         d += `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
       }
-      if (d) out.push(`<path d="${d}"/>`);
+      if (d) {
+        if (anyEff) {
+          // Compute row-average z and slope from terrain for colour lookup
+          let sumZ = 0, sumSlope = 0;
+          for (let inner = 0; inner < innerCount; inner++) {
+            const xi = isY ? outer : inner, yi = isY ? inner : outer;
+            sumZ += terrain[xi][yi];
+            if (inner < innerCount - 1) {
+              const xi2 = isY ? outer : inner+1, yi2 = isY ? inner+1 : outer;
+              sumSlope += Math.abs(terrain[xi2][yi2] - terrain[xi][yi]);
+            }
+          }
+          const avgZ = sumZ / innerCount;
+          const avgSlope = innerCount > 1 ? sumSlope / (innerCount - 1) : 0;
+          out.push(`<path ${svgStrokeStyle(avgZ, avgSlope)} d="${d}"/>`);
+        } else {
+          out.push(`<path d="${d}"/>`);
+        }
+      }
     }
   }
 
@@ -2423,14 +2452,27 @@
     } else {
       if (drawLines) {
         if (drawMode === 'contours') {
-          // Contour export: project all cached segments (no horizon applied — on-surface by definition)
+          // Contour export: grouped by level when effects active (matches canvas O(levels) path)
           if (contourDirty) buildContourCache();
-          const cv = contourGeomPts;
-          for (let i = 0; i < cv.length; i += 6) {
-            if (!inElevCutRange(cv[i+2])) continue;
-            const a = project3D(cv[i],   cv[i+1], cv[i+2]);
-            const b = project3D(cv[i+3], cv[i+4], cv[i+5]);
-            out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
+          if (anyEffect) {
+            for (const { level, pts } of contourLevels) {
+              if (!inElevCutRange(level)) continue;
+              let d = '';
+              for (let i = 0; i < pts.length; i += 6) {
+                const a = project3D(pts[i],   pts[i+1], pts[i+2]);
+                const b = project3D(pts[i+3], pts[i+4], pts[i+5]);
+                d += `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
+              }
+              if (d) out.push(`<path ${svgStrokeStyle(level, terrainMaxSlope * 0.5)} d="${d}"/>`);
+            }
+          } else {
+            const cv = contourGeomPts;
+            for (let i = 0; i < cv.length; i += 6) {
+              if (!inElevCutRange(cv[i+2])) continue;
+              const a = project3D(cv[i],   cv[i+1], cv[i+2]);
+              const b = project3D(cv[i+3], cv[i+4], cv[i+5]);
+              out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
+            }
           }
         } else if (drawMode === 'lines-x' || drawMode === 'lines-y' || drawMode === 'crosshatch') {
           svgRidgelinesOccluded(out);
@@ -2442,21 +2484,28 @@
               if (!inElevCutRange(avgZ)) continue;
               const a = project3D(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
               const b = project3D(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
-              out.push(`<path d="M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}"/>`);
+              const seg = `M${f(a.x)},${f(a.y)}L${f(b.x)},${f(b.y)}`;
+              out.push(anyEffect
+                ? `<path ${svgStrokeStyle(avgZ, hachureGeomPts[i+6])} d="${seg}"/>`
+                : `<path d="${seg}"/>`);
             }
           }
         } else {
           // Curves mode: project x-direction points per row, emit polylines (break at cut boundaries)
           for (let y = 0; y < cols; y += _lineStep) {
-            let d = '', inSeg = false;
+            let d = '', inSeg = false, sumZ = 0, sumSlope = 0, n = 0;
             for (let x = 0; x < rows - 1; x++) {
               const z = terrain[x][y];
               if (!inElevCutRange(z)) { inSeg = false; continue; }
               const p = project3D(x * scl, y * scl, z);
               d += inSeg ? `L${f(p.x)},${f(p.y)}` : `M${f(p.x)},${f(p.y)}`;
               inSeg = true;
+              sumZ += z; n++;
+              if (x > 0) sumSlope += Math.abs(z - terrain[x-1][y]);
             }
-            if (d) out.push(`<path d="${d}"/>`);
+            if (d) out.push(anyEffect && n > 0
+              ? `<path ${svgStrokeStyle(sumZ / n, n > 1 ? sumSlope / (n - 1) : 0)} d="${d}"/>`
+              : `<path d="${d}"/>`);
           }
         }
       }
