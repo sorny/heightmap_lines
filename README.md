@@ -1,4 +1,4 @@
-# heightmap_lines v1.0
+# heightmap_lines v1.1
 
 <p float="left">
   <img src="https://github.com/sorny/heightmap_lines/blob/main/data/Heightmap.png?raw=true" alt="heightmap example" height="300">
@@ -107,6 +107,21 @@ Enable under Points → Animate. Particles spring back to their terrain home pos
 | 1 | Export SVG |
 | 2 | Export DXF |
 | 3 | Export PNG |
+
+## Changelog
+
+### v1.1
+- **Collapsible panel sections** — click any section header to collapse or expand it
+- **Elevation gradient editor** — multi-stop gradient picker replaces the single high-color picker; drag handles to reposition stops, click the bar to add new stops, delete unwanted ones
+- **Gradient presets** — eight one-click presets: Mono, Classic, Fire, Ocean, Topo, Sunset, Cool, Cyber
+- **Fixed: elevation gradient on ridgeline modes** — X / Y / Curves / Cross now apply the gradient per vertex rather than per row average, so peaks correctly reach the high-elevation color
+- **Fixed: PNG 2× / 4× export** — uses `pixelDensity()` instead of canvas resize, producing an exact viewport match at higher resolution
+
+### v1.0
+- **Auto-rotate speed** — slider appears in the View section whenever auto-rotate is enabled
+- **Preset embedding** — saved presets include the loaded heightmap as base64 PNG, making them fully self-contained; loaded presets restore the heightmap automatically with a loading spinner
+- **Center guides** — crosshair overlay toggled from the View section; color adapts to background brightness
+- **Heightmap filename** — displayed below the Load button after uploading a custom image
 
 ## License
 
