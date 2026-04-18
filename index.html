@@ -428,7 +428,29 @@
             </div>
           </div>
 
+          <div class="ctrl span2">
+            <div class="ctrl-head"><span>Jitter</span></div>
+            <div class="sl-row">
+              <input type="range" id="jitter-sl" min="0" max="20" value="0">
+              <span class="val" id="jitter-v">0</span>
+            </div>
+          </div>
+
         </div>
+
+        <!-- Slope-driven spacing toggle + strength -->
+        <div class="tog-row">
+          <span>Slope spacing</span>
+          <label class="sw"><input type="checkbox" id="slopespace-sw"><span class="sw-track"></span></label>
+        </div>
+        <div class="ctrl hidden" id="slopespace-ctrl">
+          <div class="sl-row">
+            <span style="font-size:11px;color:#71717a;white-space:nowrap">Strength</span>
+            <input type="range" id="slopespacestr-sl" min="1" max="10" value="5">
+            <span class="val" id="slopespacestr-v">5</span>
+          </div>
+        </div>
+
       </div>
 
       <!-- Levels -->
@@ -798,6 +820,16 @@
   let particleGridRows = 0; // number of y-direction rows
   let particlesDirty = true;
 
+  // ── Performance / Creative features ──────────────────────────────────────────
+  let jitterAmt       = 0;     // per-vertex Z noise displacement (0=off, 1-20 units)
+  let slopeSpacing    = false; // auto-vary line density with terrain steepness
+  let slopeSpacingStr = 5;    // slope spacing strength (1-10)
+  // Web Worker: async geometry rebuild to keep UI responsive
+  let _geoWorker     = null;  // Worker instance (null = sync fallback)
+  let _workerBusy    = false; // worker currently computing
+  let _workerPending = null;  // pending rebuild request (latest wins)
+  let _workerReqId   = 0;     // monotonic id — stale responses are discarded
+
   // Marching-squares edge-pair lookup (indexed by 4-bit corner mask TL=8 TR=4 BR=2 BL=1)
   const MARCH_SEGS = [
     [],[[2,3]],[[1,2]],[[1,3]],
@@ -849,6 +881,8 @@
     compositeCtx = compositeCanvas.getContext('2d');
     if (heightmap && heightmap.width > 0) initHeightmap();
     setupPanel();
+    // Init Web Worker for async geometry rebuild (P3)
+    _geoWorker = createGeoWorker();
     noLoop();
   }
 
@@ -947,11 +981,9 @@
         if (s > terrainMaxSlope) terrainMaxSlope = s;
       }
     }
-    // Terrain changed — invalidate all geometry caches
-    ridgelineDirty = true;
-    contourDirty   = true;
-    hachureDirty   = true;
+    // Terrain changed — invalidate all geometry caches, then rebuild
     particlesDirty = true;
+    scheduleCacheRebuild(); // dispatches to worker or sync
     markDirty();
   }
 
@@ -977,12 +1009,29 @@
       const meshGrad = drawFillMode && lineGradient && _gradLUT;
       const meshCut  = elevCutMin > 0 || elevCutMax < 1;
       if (!drawFillMode) noFill();
-      if (!meshCut) { drawMeshStroke ? stroke(0) : noStroke(); }
+      // P1: single TRIANGLE_STRIP for all mesh strips using degenerate bridges
+      let meshPrevLastX = -1, meshPrevLastY = -1;
+      beginShape(TRIANGLE_STRIP);
       for (let y = 0; y < cols - 1; y += _lineStep) {
-        beginShape(TRIANGLE_STRIP);
+        const y2 = min(y + 1, cols - 1);
+        if (meshPrevLastX >= 0) {
+          // Degenerate bridge: repeat last vertex of previous strip + first of this strip
+          for (let rep = 0; rep < 2; rep++) {
+            const bz = rep === 0 ? terrain[meshPrevLastX][meshPrevLastY] : terrain[0][y];
+            const bsy = rep === 0 ? meshPrevLastY * scl : y * scl;
+            const bx  = rep === 0 ? meshPrevLastX * scl : 0;
+            const cut = meshCut && !inElevCutRange(bz);
+            if (meshCut) drawMeshStroke ? stroke(cut ? rgbBg[0] : 0, cut ? rgbBg[1] : 0, cut ? rgbBg[2] : 0) : noStroke();
+            if (cut) { if (drawFillMode) fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+            else if (meshGrad) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(bz)*255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+            else if (drawFillMode) { fill(255); }
+            vertex(bx, bsy, bz);
+          }
+        }
+        if (!meshCut) { drawMeshStroke ? stroke(0) : noStroke(); }
         for (let x = 0; x < rows; x++) {
-          const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
-          for (const [z, sy] of [[z1, y * scl], [z2, min(y+1, cols-1) * scl]]) {
+          const z1 = terrain[x][y], z2 = terrain[x][y2];
+          for (const [z, sy] of [[z1, y * scl], [z2, y2 * scl]]) {
             const cut = meshCut && !inElevCutRange(z);
             if (meshCut) drawMeshStroke ? stroke(cut ? rgbBg[0] : 0, cut ? rgbBg[1] : 0, cut ? rgbBg[2] : 0) : noStroke();
             if (cut) { if (drawFillMode) fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
@@ -991,8 +1040,9 @@
             vertex(x * scl, sy, z);
           }
         }
-        endShape();
+        meshPrevLastX = rows - 1; meshPrevLastY = y2;
       }
+      endShape();
     }
 
     strokeWeight(strokeW);
@@ -1073,23 +1123,372 @@
     return strokeW + normalizeElevation(avgZ) * strokeElevRange;
   }
 
+  // ── 2D value noise — deterministic, works on main thread and in Web Worker ───
+  function valueNoise2D(x, y) {
+    const ix = Math.floor(x), iy = Math.floor(y);
+    const fx = x - ix, fy = y - iy;
+    const ux = fx*fx*fx*(fx*(fx*6-15)+10);
+    const uy = fy*fy*fy*(fy*(fy*6-15)+10);
+    const h = (a, b) => {
+      let n = ((a * 1031 + b * 2999) | 0);
+      n = (((n ^ (n >>> 13)) * 0x45d9f3b) | 0);
+      return (((n ^ (n >>> 16)) & 0xffff) / 0xffff);
+    };
+    return h(ix,iy)*(1-ux)*(1-uy) + h(ix+1,iy)*ux*(1-uy)
+         + h(ix,iy+1)*(1-ux)*uy   + h(ix+1,iy+1)*ux*uy;
+  }
+
+  // ── Web Worker: async geometry rebuild ───────────────────────────────────────
+  // The worker duplicates the pure-computation path (no p5 deps).
+  // Main thread still renders; cache is applied when the worker replies.
+  function createGeoWorker() {
+    const SRC = `
+'use strict';
+const MARCH_SEGS=[
+  [],[[2,3]],[[1,2]],[[1,3]],
+  [[0,1]],[[0,1],[2,3]],[[0,2]],[[0,3]],
+  [[0,3]],[[0,2]],[[0,3],[1,2]],[[0,1]],
+  [[1,3]],[[1,2]],[[2,3]],[]
+];
+const Z_LIFT=0.3;
+function vn2(x,y){
+  const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
+  const ux=fx*fx*fx*(fx*(fx*6-15)+10),uy=fy*fy*fy*(fy*(fy*6-15)+10);
+  const h=(a,b)=>{let n=((a*1031+b*2999)|0);n=(((n^(n>>>13))*0x45d9f3b)|0);return(((n^(n>>>16))&0xffff)/0xffff);};
+  return h(ix,iy)*(1-ux)*(1-uy)+h(ix+1,iy)*ux*(1-uy)+h(ix,iy+1)*(1-ux)*uy+h(ix+1,iy+1)*ux*uy;
+}
+function doCalcTerrain(p){
+  const{pixels,imgW,imgH,scl,elevScale,blackPoint,whitePoint,shiftLines,shiftPeaks}=p;
+  const cols=Math.floor(imgH/scl),rows=Math.floor(imgW/scl);
+  const t=new Float32Array(rows*cols);
+  let tMin=Infinity,tMax=-Infinity;
+  for(let x=0;x<rows;x++){for(let y=0;y<cols;y++){
+    const px=Math.min(x*scl+shiftPeaks,imgW-1),py=Math.min(y*scl+shiftLines,imgH-1);
+    const raw=pixels[(px+py*imgW)*4];
+    const cl=Math.max(blackPoint,Math.min(whitePoint,raw));
+    const z=(blackPoint===whitePoint)?0:(cl-blackPoint)/(whitePoint-blackPoint)*100-50;
+    const zs=z*elevScale;t[x*cols+y]=zs;
+    if(zs<tMin)tMin=zs;if(zs>tMax)tMax=zs;
+  }}
+  let tMs=0.001;
+  for(let x=0;x<rows-1;x++){for(let y=0;y<cols-1;y++){
+    const s=Math.max(Math.abs(t[(x+1)*cols+y]-t[x*cols+y]),Math.abs(t[x*cols+(y+1)]-t[x*cols+y]));
+    if(s>tMs)tMs=s;
+  }}
+  return{terrain:t,rows,cols,terrainMinZ:tMin,terrainMaxZ:tMax,terrainMaxSlope:tMs};
+}
+function doBuildRidgeDir(t,rows,cols,isY,p){
+  const{scl,_lineStep,jitterAmt,slopeSpacing,slopeSpacingStr,terrainMinZ}=p;
+  const wBot=terrainMinZ-1,outerCount=isY?rows:cols,innerCount=isY?cols:rows,baseStep=_lineStep;
+  let rSlopes=null,maxRS=0.001;
+  if(slopeSpacing){
+    rSlopes=new Float32Array(outerCount);
+    for(let o=0;o<outerCount;o++){
+      let s=0;for(let i=0;i<innerCount-1;i++){
+        const x0=isY?o:i,y0=isY?i:o,x1=isY?o:i+1,y1=isY?i+1:o;
+        s+=Math.abs(t[x1*cols+y1]-t[x0*cols+y0]);
+      }
+      rSlopes[o]=innerCount>1?s/(innerCount-1):0;if(rSlopes[o]>maxRS)maxRS=rSlopes[o];
+    }
+  }
+  const ptsList=[],wallList=[];
+  let lastR=-Infinity;
+  for(let outer=0;outer<outerCount;outer++){
+    let effStep=baseStep;
+    if(slopeSpacing&&rSlopes){
+      const ns=rSlopes[outer]/maxRS;
+      effStep=Math.max(1,Math.round(baseStep*(1-ns*Math.min(1,slopeSpacingStr/10))));
+    }
+    if(outer>0&&outer-lastR<effStep)continue;lastR=outer;
+    const pts=new Float32Array(innerCount*3),wall=new Float32Array(innerCount*6);
+    for(let inner=0;inner<innerCount;inner++){
+      const x=isY?outer:inner,y=isY?inner:outer,pi=inner*3;
+      let pz=t[x*cols+y]+Z_LIFT;
+      if(jitterAmt>0)pz+=(vn2(x*0.15,y*0.15)-0.5)*jitterAmt*2;
+      pts[pi]=x*scl;pts[pi+1]=y*scl;pts[pi+2]=pz;
+      const wi=inner*6;
+      wall[wi]=x*scl;wall[wi+1]=y*scl;wall[wi+2]=t[x*cols+y];
+      wall[wi+3]=x*scl;wall[wi+4]=y*scl;wall[wi+5]=wBot;
+    }
+    ptsList.push(pts);wallList.push(wall);
+  }
+  // Pack into flat buffers + size arrays for efficient transfer
+  let ptsTotal=0,wallTotal=0;
+  const ptsSizes=new Int32Array(ptsList.length),wallSizes=new Int32Array(wallList.length);
+  ptsList.forEach((a,i)=>{ptsSizes[i]=a.length;ptsTotal+=a.length;});
+  wallList.forEach((a,i)=>{wallSizes[i]=a.length;wallTotal+=a.length;});
+  const ptsFlat=new Float32Array(ptsTotal),wallFlat=new Float32Array(wallTotal);
+  let po=0,wo=0;
+  ptsList.forEach(a=>{ptsFlat.set(a,po);po+=a.length;});
+  wallList.forEach(a=>{wallFlat.set(a,wo);wo+=a.length;});
+  return{ptsFlat,wallFlat,ptsSizes,wallSizes};
+}
+function doBuildHachure(t,rows,cols,p){
+  const{scl,_lineStep,hachureLength,jitterAmt}=p;
+  const v=[],step=_lineStep,hl=hachureLength;
+  for(let x=1;x<rows-1;x+=step){for(let y=1;y<cols-1;y+=step){
+    const dx=(t[(x+1)*cols+y]-t[(x-1)*cols+y])/(2*scl);
+    const dy=(t[x*cols+(y+1)]-t[x*cols+(y-1)])/(2*scl);
+    const gm=Math.sqrt(dx*dx+dy*dy);if(gm<0.001)continue;
+    const len=gm*scl*hl,nx=-dy/gm,ny=dx/gm;
+    const cx=x*scl,cy=y*scl,cz=t[x*cols+y]+Z_LIFT;
+    v.push(cx-nx*len/2,cy-ny*len/2,cz,cx+nx*len/2,cy+ny*len/2,cz,gm*scl);
+  }}
+  return new Float32Array(v);
+}
+function doBuildContour(t,rows,cols,p){
+  const{scl,contourInterval,terrainMinZ,terrainMaxZ}=p;
+  const allV=[],levelData=[];
+  for(let lv=terrainMinZ;lv<=terrainMaxZ+0.001;lv+=contourInterval){
+    const lvV=[];
+    for(let xi=0;xi<rows-1;xi++){for(let yi=0;yi<cols-1;yi++){
+      const h00=t[xi*cols+yi],h10=t[(xi+1)*cols+yi],h11=t[(xi+1)*cols+(yi+1)],h01=t[xi*cols+(yi+1)];
+      const c=(h00>=lv?8:0)|(h10>=lv?4:0)|(h11>=lv?2:0)|(h01>=lv?1:0);
+      if(c===0||c===15)continue;
+      const x0=xi*scl,x1=(xi+1)*scl,y0=yi*scl,y1=(yi+1)*scl;
+      const lp=(a,b,ha,hb)=>(hb===ha?(a+b)/2:a+(lv-ha)/(hb-ha)*(b-a));
+      const ep=e=>{switch(e){case 0:return[lp(x0,x1,h00,h10),y0];case 1:return[x1,lp(y0,y1,h10,h11)];case 2:return[lp(x1,x0,h11,h01),y1];case 3:return[x0,lp(y1,y0,h01,h00)];}};
+      for(const[e0,e1]of MARCH_SEGS[c]){
+        const[ax,ay]=ep(e0),[bx,by]=ep(e1);
+        lvV.push(ax,ay,lv+Z_LIFT,bx,by,lv+Z_LIFT);allV.push(ax,ay,lv+Z_LIFT,bx,by,lv+Z_LIFT);
+      }
+    }}
+    if(lvV.length)levelData.push({level:lv,pts:new Float32Array(lvV)});
+  }
+  return{flat:new Float32Array(allV),levelData};
+}
+self.onmessage=function(e){
+  const{id,params,buildTerrain,buildRidge,buildHachure,buildContour,drawMode}=e.data;
+  try{
+    let t,rows,cols,tMin,tMax,tMs;
+    const transfers=[];
+    const result={id,type:'result'};
+    if(buildTerrain){
+      const r=doCalcTerrain(params);
+      t=r.terrain;rows=r.rows;cols=r.cols;tMin=r.terrainMinZ;tMax=r.terrainMaxZ;tMs=r.terrainMaxSlope;
+      result.terrain=t;result.rows=rows;result.cols=cols;
+      result.terrainMinZ=tMin;result.terrainMaxZ=tMax;result.terrainMaxSlope=tMs;
+      transfers.push(t.buffer);
+    }else{
+      t=params.terrainFlat;rows=params.rows;cols=params.cols;
+      tMin=params.terrainMinZ;tMax=params.terrainMaxZ;tMs=params.terrainMaxSlope;
+    }
+    const fp={...params,terrainMinZ:tMin,terrainMaxZ:tMax,terrainMaxSlope:tMs};
+    if(buildRidge){
+      const isCross=drawMode==='crosshatch',isYMode=drawMode==='lines-y';
+      const rX=doBuildRidgeDir(t,rows,cols,false,fp);
+      result.rXptsFlat=rX.ptsFlat;result.rXwallFlat=rX.wallFlat;
+      result.rXptsSizes=rX.ptsSizes;result.rXwallSizes=rX.wallSizes;
+      transfers.push(rX.ptsFlat.buffer,rX.wallFlat.buffer,rX.ptsSizes.buffer,rX.wallSizes.buffer);
+      if(isCross||isYMode){
+        const rY=doBuildRidgeDir(t,rows,cols,true,fp);
+        result.rYptsFlat=rY.ptsFlat;result.rYwallFlat=rY.wallFlat;
+        result.rYptsSizes=rY.ptsSizes;result.rYwallSizes=rY.wallSizes;
+        transfers.push(rY.ptsFlat.buffer,rY.wallFlat.buffer,rY.ptsSizes.buffer,rY.wallSizes.buffer);
+      }
+    }
+    if(buildHachure){
+      const h=doBuildHachure(t,rows,cols,fp);result.hachure=h;transfers.push(h.buffer);
+    }
+    if(buildContour){
+      const c=doBuildContour(t,rows,cols,fp);
+      result.contourFlat=c.flat;transfers.push(c.flat.buffer);
+      result.contourLevelLevels=new Float32Array(c.levelData.map(l=>l.level));
+      const lvBufs=c.levelData.map(l=>l.pts);
+      result.contourLevelSizes=new Int32Array(lvBufs.map(a=>a.length));
+      let tot=0;lvBufs.forEach(a=>{tot+=a.length;});
+      const lf=new Float32Array(tot);let off=0;lvBufs.forEach(a=>{lf.set(a,off);off+=a.length;});
+      result.contourLevelsFlat=lf;
+      transfers.push(result.contourLevelLevels.buffer,result.contourLevelSizes.buffer,lf.buffer);
+    }
+    self.postMessage(result,transfers);
+  }catch(err){self.postMessage({id,type:'error',error:err.message});}
+};
+`;
+    try {
+      const blob = new Blob([SRC], { type: 'text/javascript' });
+      const worker = new Worker(URL.createObjectURL(blob));
+      worker.onmessage = onWorkerMessage;
+      worker.onerror   = e => { console.warn('GeoWorker error:', e); _workerBusy = false; };
+      return worker;
+    } catch(e) { console.warn('Worker unavailable:', e); return null; }
+  }
+
+  // Unpack flat ridgeline buffer back into per-row Float32Array array.
+  function unpackRows(flat, sizes) {
+    const out = []; let off = 0;
+    for (let i = 0; i < sizes.length; i++) {
+      out.push(new Float32Array(flat.buffer, off * 4, sizes[i]));
+      off += sizes[i];
+    }
+    return out;
+  }
+
+  function onWorkerMessage(e) {
+    const r = e.data;
+    if (r.id !== _workerReqId) { _workerBusy = false; drainWorkerQueue(); return; }
+    if (r.type === 'error') {
+      console.warn('Worker error, falling back sync:', r.error);
+      _workerBusy = false; _geoWorker = null;
+      // Rebuild synchronously
+      if (ridgelineDirty)  buildRidgelineCache();
+      if (hachureDirty)    buildHachureCache();
+      if (contourDirty)    buildContourCache();
+      markDirty(); return;
+    }
+    // Apply terrain if computed by worker
+    if (r.terrain) {
+      const t = r.terrain;
+      rows = r.rows; cols = r.cols;
+      terrainMinZ = r.terrainMinZ; terrainMaxZ = r.terrainMaxZ; terrainMaxSlope = r.terrainMaxSlope;
+      terrain = [];
+      for (let x = 0; x < rows; x++) {
+        terrain[x] = new Float32Array(cols);
+        for (let y = 0; y < cols; y++) terrain[x][y] = t[x * cols + y];
+      }
+      particlesDirty = true;
+    }
+    // Apply ridgeline
+    if (r.rXptsFlat) {
+      const isCross = drawMode === 'crosshatch', isYMode = drawMode === 'lines-y';
+      if (isYMode && !isCross) {
+        // lines-y: use Y result as "X" slot
+        ridgelineRowPtsX  = unpackRows(r.rYptsFlat,  r.rYptsSizes);
+        ridgelineWallPtsX = unpackRows(r.rYwallFlat, r.rYwallSizes);
+        ridgelineRowPtsY  = null; ridgelineWallPtsY = null;
+      } else {
+        ridgelineRowPtsX  = unpackRows(r.rXptsFlat,  r.rXptsSizes);
+        ridgelineWallPtsX = unpackRows(r.rXwallFlat, r.rXwallSizes);
+        if (isCross && r.rYptsFlat) {
+          ridgelineRowPtsY  = unpackRows(r.rYptsFlat,  r.rYptsSizes);
+          ridgelineWallPtsY = unpackRows(r.rYwallFlat, r.rYwallSizes);
+        } else { ridgelineRowPtsY = null; ridgelineWallPtsY = null; }
+      }
+      ridgelineDirty = false;
+    }
+    // Apply hachure
+    if (r.hachure) { hachureGeomPts = r.hachure; hachureDirty = false; }
+    // Apply contour
+    if (r.contourFlat) {
+      contourGeomPts = r.contourFlat;
+      const levels = Array.from(r.contourLevelLevels);
+      const sizes  = Array.from(r.contourLevelSizes);
+      const lf     = r.contourLevelsFlat;
+      contourLevels = []; let off = 0;
+      levels.forEach((lv, i) => {
+        contourLevels.push({ level: lv, pts: new Float32Array(lf.buffer, off * 4, sizes[i]) });
+        off += sizes[i];
+      });
+      contourDirty = false;
+    }
+    _workerBusy = false;
+    markDirty();
+    drainWorkerQueue();
+  }
+
+  function drainWorkerQueue() {
+    if (_workerPending && _geoWorker && !_workerBusy) {
+      const p = _workerPending; _workerPending = null; postToWorker(p);
+    }
+  }
+
+  function postToWorker(msg) {
+    if (!_geoWorker) return false;
+    _workerBusy = true;
+    _workerReqId = msg.id;
+    _geoWorker.postMessage(msg, msg._transfers || []);
+    return true;
+  }
+
+  // Build a worker request from current state and post it (or queue it).
+  function requestWorkerRebuild(doTerrain) {
+    if (!_geoWorker) return false;
+    const pixels = blurredPixels || heightmapPixels;
+    if (!pixels) return false;
+    const id = ++_workerReqId;
+    // Pack terrain flat for non-terrain rebuilds
+    let terrainFlat = null;
+    if (!doTerrain && terrain.length) {
+      terrainFlat = new Float32Array(rows * cols);
+      for (let x = 0; x < rows; x++) for (let y = 0; y < cols; y++) terrainFlat[x * cols + y] = terrain[x][y];
+    }
+    const isCross = drawMode === 'crosshatch', isYMode = drawMode === 'lines-y';
+    const needRidge   = ridgelineDirty   && (drawMode !== 'contours' && drawMode !== 'hachure');
+    const needHachure = hachureDirty     && drawMode === 'hachure';
+    const needContour = contourDirty     && drawMode === 'contours';
+    const params = {
+      pixels,
+      imgW: heightmap.width, imgH: heightmap.height,
+      scl, _lineStep, linePx, elevScale, blackPoint, whitePoint,
+      shiftLines, shiftPeaks, hachureLength, contourInterval,
+      jitterAmt, slopeSpacing, slopeSpacingStr,
+      terrainFlat, rows, cols, terrainMinZ, terrainMaxZ, terrainMaxSlope
+    };
+    const transfers = doTerrain ? [pixels.buffer.slice(0)] : (terrainFlat ? [terrainFlat.buffer] : []);
+    // Don't transfer pixels — keep original; send a copy
+    const msg = {
+      id, type: 'build',
+      buildTerrain: doTerrain,
+      buildRidge:   needRidge || doTerrain,
+      buildHachure: needHachure || doTerrain,
+      buildContour: needContour || doTerrain,
+      drawMode,
+      params: { ...params, pixels: doTerrain ? new Uint8ClampedArray(pixels) : null,
+                terrainFlat: terrainFlat }
+    };
+    // Transfer pixel copy and optional terrain copy
+    if (doTerrain) msg._transfers = [msg.params.pixels.buffer];
+    else if (terrainFlat) msg._transfers = [terrainFlat.buffer];
+
+    if (_workerBusy) { _workerPending = msg; return true; }
+    return postToWorker(msg);
+  }
+
   // ── Ridgeline geometry cache ─────────────────────────────────────────────────
   // Parameterised builder — called for X and/or Y direction depending on drawMode.
   function buildRidgelineCacheForDir(isY) {
     const rowPts = [], wallPts = [];
     const outerCount = isY ? rows : cols;
     const innerCount = isY ? cols : rows;
-    const step = _lineStep;
-    // Wall bottom must stay below the terrain minimum so the geometry never
-    // inverts (top < bottom) at high elevation scales.
+    const baseStep   = _lineStep;
     const wallBottom = terrainMinZ - 1;
-    for (let outer = 0; outer < outerCount; outer += step) {
+
+    // Slope-driven spacing: pre-compute average slope per outer row.
+    let rowSlopes = null, maxRowSlope = 0.001;
+    if (slopeSpacing) {
+      rowSlopes = new Float32Array(outerCount);
+      for (let outer = 0; outer < outerCount; outer++) {
+        let s = 0;
+        for (let inner = 0; inner < innerCount - 1; inner++) {
+          const x0 = isY ? outer : inner,   y0 = isY ? inner   : outer;
+          const x1 = isY ? outer : inner+1, y1 = isY ? inner+1 : outer;
+          s += Math.abs(terrain[x1][y1] - terrain[x0][y0]);
+        }
+        rowSlopes[outer] = innerCount > 1 ? s / (innerCount - 1) : 0;
+        if (rowSlopes[outer] > maxRowSlope) maxRowSlope = rowSlopes[outer];
+      }
+    }
+
+    let lastRendered = -Infinity;
+    for (let outer = 0; outer < outerCount; outer++) {
+      // Compute effective step for this row (slope-driven or uniform)
+      let effStep = baseStep;
+      if (slopeSpacing && rowSlopes) {
+        const ns = rowSlopes[outer] / maxRowSlope;
+        effStep = Math.max(1, Math.round(baseStep * (1 - ns * Math.min(1, slopeSpacingStr / 10))));
+      }
+      if (outer > 0 && outer - lastRendered < effStep) continue;
+      lastRendered = outer;
+
       const pts  = new Float32Array(innerCount * 3);
       const wall = new Float32Array(innerCount * 6);
       for (let inner = 0; inner < innerCount; inner++) {
         const x = isY ? outer : inner, y = isY ? inner : outer;
         const pi = inner * 3;
-        pts[pi]   = x * scl; pts[pi+1] = y * scl; pts[pi+2] = terrain[x][y] + Z_LIFT;
+        let pz = terrain[x][y] + Z_LIFT;
+        // Jitter: organic Z displacement via value noise
+        if (jitterAmt > 0) pz += (valueNoise2D(x * 0.15, y * 0.15) - 0.5) * jitterAmt * 2;
+        pts[pi]   = x * scl; pts[pi+1] = y * scl; pts[pi+2] = pz;
         const wi = inner * 6;
         wall[wi]   = x * scl; wall[wi+1] = y * scl; wall[wi+2] = terrain[x][y];
         wall[wi+3] = x * scl; wall[wi+4] = y * scl; wall[wi+5] = wallBottom;
@@ -1115,6 +1514,18 @@
       ridgelineRowPtsY = null; ridgelineWallPtsY = null;
     }
     ridgelineDirty = false;
+  }
+
+  // ── Terrain rebuild dispatcher (sync or worker) ───────────────────────────────
+  // Called whenever calcTerrain() finishes — decides whether to rebuild geometry
+  // on the main thread now or delegate to the worker (non-blocking).
+  function scheduleCacheRebuild() {
+    ridgelineDirty = true; contourDirty = true; hachureDirty = true;
+    if (requestWorkerRebuild(false)) return; // worker accepted it
+    // Sync fallback — rebuild immediately on main thread
+    if (drawMode !== 'contours' && drawMode !== 'hachure') buildRidgelineCache();
+    if (drawMode === 'hachure')   buildHachureCache();
+    if (drawMode === 'contours')  buildContourCache();
   }
 
   // ── Build contour geometry cache ──────────────────────────────────────────
@@ -1163,50 +1574,72 @@
     const isCurves = drawMode === 'curves';
     const isCross  = drawMode === 'crosshatch';
     if (isCurves) curveTightness(tightness);
+    const doCut    = elevCutMin > 0 || elevCutMax < 1;
 
+    // ── renderDir: draw one direction's ridgeline cache ──────────────────────
     const renderDir = (rowPtsArr, wallPtsArr) => {
-      for (let ri = 0; ri < rowPtsArr.length; ri++) {
-        const wall = wallPtsArr[ri], pts = rowPtsArr[ri];
-        const avgZ     = getRowAvgZ(pts);
-        const avgSlope = getRowAvgSlope(pts);
-        const [sr, sg, sb, sa] = getRowStroke(avgZ, avgSlope);
-        const sw = getRowStrokeWeight(avgZ);
-        const doCut = elevCutMin > 0 || elevCutMax < 1;
+      if (!rowPtsArr || !rowPtsArr.length) return;
+      const wallGrad = drawFillMode && lineGradient && _gradLUT;
 
-        // 1. Occluding wall — gradient-coloured when fill+gradient are both on, else background
-        noStroke();
-        const wallGrad = drawFillMode && lineGradient && _gradLUT;
-        beginShape(TRIANGLE_STRIP);
+      // ── P1: SINGLE TRIANGLE_STRIP for ALL walls via degenerate bridges ──────
+      // Converts O(rows) draw calls → 1 draw call. Each row pair is bridged with
+      // two degenerate vertices so topology stays correct but creates zero-area triangles.
+      noStroke();
+      beginShape(TRIANGLE_STRIP);
+      for (let ri = 0; ri < wallPtsArr.length; ri++) {
+        const wall = wallPtsArr[ri];
+        if (ri > 0) {
+          // Degenerate bridge: repeat last vertex of previous row + first of this row
+          const prev = wallPtsArr[ri - 1];
+          const pi = prev.length - 3;
+          if (wallGrad && inElevCutRange(prev[pi+2])) {
+            const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(prev[pi+2]) * 255)));
+            fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]);
+          } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+          vertex(prev[pi], prev[pi+1], prev[pi+2]);
+          if (wallGrad && inElevCutRange(wall[2])) {
+            const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(wall[2]) * 255)));
+            fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]);
+          } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+          vertex(wall[0], wall[1], wall[2]);
+        }
         for (let i = 0; i < wall.length; i += 3) {
           if (wallGrad && inElevCutRange(wall[i+2])) {
-            const wi = Math.min(255, Math.max(0, Math.round(normalizeElevation(wall[i+2]) * 255)));
-            fill(_gradLUT[wi*3], _gradLUT[wi*3+1], _gradLUT[wi*3+2]);
-          } else {
-            fill(rgbBg[0], rgbBg[1], rgbBg[2]);
-          }
+            const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(wall[i+2]) * 255)));
+            fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]);
+          } else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
           vertex(wall[i], wall[i+1], wall[i+2]);
         }
-        endShape();
+      }
+      endShape();
 
-        // 2. Line / curve lifted above the wall
-        // When gradient is on, use per-vertex colors so peaks get the true high-end
-        // color regardless of row-average elevation.
-        noFill(); strokeWeight(sw);
-        if (lineGradient && _gradLUT) {
-          if (!isCurves) {
-            beginShape(LINES);
+      // ── Line / curve pass ─────────────────────────────────────────────────
+      // P1: lines-mode already batches all rows in ONE beginShape(LINES) call.
+      // Per-vertex stroke() is supported by p5's WEBGL — no extra draw calls.
+      noFill();
+      if (lineGradient && _gradLUT) {
+        if (!isCurves) {
+          beginShape(LINES);
+          for (let ri = 0; ri < rowPtsArr.length; ri++) {
+            const pts = rowPtsArr[ri];
+            const [,,, sa] = getRowStroke(getRowAvgZ(pts), getRowAvgSlope(pts));
+            const sw = getRowStrokeWeight(getRowAvgZ(pts));
+            strokeWeight(sw);
             for (let i = 0; i < pts.length - 3; i += 3) {
               if (doCut && !inElevCutRange((pts[i+2] + pts[i+5]) / 2)) continue;
-              const idx1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2])   * 255)));
-              const idx2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+5])   * 255)));
-              stroke(_gradLUT[idx1*3], _gradLUT[idx1*3+1], _gradLUT[idx1*3+2], sa);
+              const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+2]) * 255)));
+              const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(pts[i+5]) * 255)));
+              stroke(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2], sa);
               vertex(pts[i],   pts[i+1],   pts[i+2]);
-              stroke(_gradLUT[idx2*3], _gradLUT[idx2*3+1], _gradLUT[idx2*3+2], sa);
+              stroke(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2], sa);
               vertex(pts[i+3], pts[i+4],   pts[i+5]);
             }
-            endShape();
-          } else {
-            // Curves: break spline at cut boundaries so gaps appear mid-row
+          }
+          endShape();
+        } else {
+          for (let ri = 0; ri < rowPtsArr.length; ri++) {
+            const pts = rowPtsArr[ri];
+            const [,,, sa] = getRowStroke(getRowAvgZ(pts), getRowAvgSlope(pts));
             let inShape = false;
             for (let i = 0; i < pts.length; i += 3) {
               const inRange = !doCut || inElevCutRange(pts[i+2]);
@@ -1220,18 +1653,28 @@
             }
             if (inShape) endShape();
           }
-        } else {
-          stroke(sr, sg, sb, sa);
-          if (!isCurves) {
-            beginShape(LINES);
+        }
+      } else {
+        if (!isCurves) {
+          beginShape(LINES);
+          for (let ri = 0; ri < rowPtsArr.length; ri++) {
+            const pts = rowPtsArr[ri];
+            const [sr, sg, sb, sa] = getRowStroke(getRowAvgZ(pts), getRowAvgSlope(pts));
+            const sw = getRowStrokeWeight(getRowAvgZ(pts));
+            strokeWeight(sw);
+            stroke(sr, sg, sb, sa);
             for (let i = 0; i < pts.length - 3; i += 3) {
               if (doCut && !inElevCutRange((pts[i+2] + pts[i+5]) / 2)) continue;
               vertex(pts[i],   pts[i+1],   pts[i+2]);
               vertex(pts[i+3], pts[i+4],   pts[i+5]);
             }
-            endShape();
-          } else {
-            // Curves: break spline at cut boundaries so gaps appear mid-row
+          }
+          endShape();
+        } else {
+          for (let ri = 0; ri < rowPtsArr.length; ri++) {
+            const pts = rowPtsArr[ri];
+            const [sr, sg, sb, sa] = getRowStroke(getRowAvgZ(pts), getRowAvgSlope(pts));
+            stroke(sr, sg, sb, sa);
             let inShape = false;
             for (let i = 0; i < pts.length; i += 3) {
               const inRange = !doCut || inElevCutRange(pts[i+2]);
@@ -1252,24 +1695,37 @@
 
   // ── Contour renderer (uses cached geometry) ────────────────────────────────
   function drawContours() {
-    // 1. Occluding terrain surface — gradient when fill+gradient active, else background
+    // 1. Occluding terrain surface — P1: single TRIANGLE_STRIP via degenerate bridges
     noStroke();
     const surfGrad = drawFillMode && lineGradient && _gradLUT;
+    beginShape(TRIANGLE_STRIP);
     for (let y = 0; y < cols - 1; y++) {
-      beginShape(TRIANGLE_STRIP);
+      if (y > 0) {
+        // Degenerate bridge: repeat last pair of previous strip, first pair of next
+        const yp = y - 1;
+        for (const z of [terrain[rows-1][yp], terrain[rows-1][yp]]) {
+          if (surfGrad && inElevCutRange(z)) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(z)*255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+          else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+          vertex((rows-1)*scl, yp*scl, z);
+        }
+        const z0 = terrain[0][y];
+        if (surfGrad && inElevCutRange(z0)) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(z0)*255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(0, y*scl, z0);
+      }
       for (let x = 0; x < rows; x++) {
         const z1 = terrain[x][y], z2 = terrain[x][y+1];
-        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
+        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1)*255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
         else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, y * scl, z1);
-        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
+        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2)*255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
         else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, (y+1) * scl, z2);
       }
-      endShape();
     }
+    endShape();
 
-    // 2. Contour lines from cache
+    // 2. Contour lines from cache — P2: batch all with per-vertex stroke in ONE draw call
     if (contourDirty) buildContourCache();
     noFill();
     const anyEffect = lineGradient || strokeByElev || slopeOpacity;
@@ -1277,22 +1733,23 @@
       stroke(lineColor); strokeWeight(strokeW);
       beginShape(LINES);
       for (let i = 0; i < contourGeomPts.length; i += 6) {
-        // Each pair of vertices shares the same elevation (contour level = az)
         if (!inElevCutRange(contourGeomPts[i+2])) continue;
         vertex(contourGeomPts[i],   contourGeomPts[i+1], contourGeomPts[i+2]);
         vertex(contourGeomPts[i+3], contourGeomPts[i+4], contourGeomPts[i+5]);
       }
       endShape();
     } else {
-      // O(levels) draw calls — all segments at the same level share color/weight
+      // P2: all levels in ONE beginShape(LINES) — per-vertex stroke for color variation
+      beginShape(LINES);
       for (const { level, pts } of contourLevels) {
         if (!inElevCutRange(level)) continue;
         const [sr,sg,sb,sa] = getRowStroke(level, terrainMaxSlope * 0.5);
-        stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(level));
-        beginShape(LINES);
+        const sw = getRowStrokeWeight(level);
+        strokeWeight(sw);
+        stroke(sr, sg, sb, sa);
         for (let i = 0; i < pts.length; i += 3) vertex(pts[i], pts[i+1], pts[i+2]);
-        endShape();
       }
+      endShape();
     }
   }
 
@@ -1322,49 +1779,64 @@
   }
 
   function drawHachures() {
-    // Occluding terrain surface — gradient when fill+gradient active, else background
+    // Occluding terrain surface — P1: single TRIANGLE_STRIP via degenerate bridges
     noStroke();
     const surfGrad = drawFillMode && lineGradient && _gradLUT;
+    beginShape(TRIANGLE_STRIP);
     for (let y = 0; y < cols - 1; y++) {
-      beginShape(TRIANGLE_STRIP);
+      if (y > 0) {
+        // Degenerate bridge between row strips
+        const yp = y - 1;
+        const zl = terrain[rows-1][yp];
+        for (let k = 0; k < 2; k++) {
+          if (surfGrad && inElevCutRange(zl)) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(zl)*255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+          else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+          vertex((rows-1)*scl, yp*scl, zl);
+        }
+        const z0 = terrain[0][y];
+        if (surfGrad && inElevCutRange(z0)) { const gi = Math.min(255, Math.max(0, Math.round(normalizeElevation(z0)*255))); fill(_gradLUT[gi*3], _gradLUT[gi*3+1], _gradLUT[gi*3+2]); }
+        else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
+        vertex(0, y*scl, z0);
+      }
       for (let x = 0; x < rows; x++) {
         const z1 = terrain[x][y], z2 = terrain[x][min(y+1, cols-1)];
-        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1) * 255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
+        if (surfGrad && inElevCutRange(z1)) { const i1 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z1)*255))); fill(_gradLUT[i1*3], _gradLUT[i1*3+1], _gradLUT[i1*3+2]); }
         else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, y * scl, z1);
-        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2) * 255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
+        if (surfGrad && inElevCutRange(z2)) { const i2 = Math.min(255, Math.max(0, Math.round(normalizeElevation(z2)*255))); fill(_gradLUT[i2*3], _gradLUT[i2*3+1], _gradLUT[i2*3+2]); }
         else { fill(rgbBg[0], rgbBg[1], rgbBg[2]); }
         vertex(x * scl, (y+1) * scl, z2);
       }
-      endShape();
     }
+    endShape();
+
     if (hachureDirty) buildHachureCache();
     if (!hachureGeomPts || hachureGeomPts.length === 0) return;
     noFill();
     const anyEffect = lineGradient || strokeByElev || slopeOpacity;
+    // P2: ALL hachure segments in ONE beginShape(LINES) regardless of effects.
+    // Per-vertex stroke() sets color per segment pair without extra draw calls.
+    beginShape(LINES);
     if (!anyEffect) {
       stroke(lineColor); strokeWeight(strokeW);
-      beginShape(LINES);
+      for (let i = 0; i < hachureGeomPts.length; i += 7) {
+        if (!inElevCutRange((hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2)) continue;
+        vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
+        vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
+      }
+    } else {
       for (let i = 0; i < hachureGeomPts.length; i += 7) {
         const avgZ = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
         if (!inElevCutRange(avgZ)) continue;
-        vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
-        vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
-      }
-      endShape();
-    } else {
-      for (let i = 0; i < hachureGeomPts.length; i += 7) {
-        const avgZ  = (hachureGeomPts[i+2] + hachureGeomPts[i+5]) / 2;
-        if (!inElevCutRange(avgZ)) continue;
-        const slope = hachureGeomPts[i+6]; // pre-stored elevation/grid-step
+        const slope = hachureGeomPts[i+6];
         const [sr,sg,sb,sa] = getRowStroke(avgZ, slope);
-        stroke(sr, sg, sb, sa); strokeWeight(getRowStrokeWeight(avgZ));
-        beginShape(LINES);
+        strokeWeight(getRowStrokeWeight(avgZ));
+        stroke(sr, sg, sb, sa);
         vertex(hachureGeomPts[i],   hachureGeomPts[i+1], hachureGeomPts[i+2]);
         vertex(hachureGeomPts[i+3], hachureGeomPts[i+4], hachureGeomPts[i+5]);
-        endShape();
       }
     }
+    endShape();
   }
 
   // Draw point markers at every terrain vertex on the rendered lines/contours.
@@ -1713,6 +2185,27 @@
     markDirty();
   }
   function setHachureLength(v)   { hachureLength = constrain(floor(v), 1, 50); g('hachure-sl').value = hachureLength; g('hachure-v').textContent = hachureLength; hachureDirty = true; markDirty(); }
+  function setJitterAmt(v) {
+    jitterAmt = constrain(floor(v), 0, 20);
+    g('jitter-sl').value = jitterAmt;
+    g('jitter-v').textContent = jitterAmt;
+    ridgelineDirty = true; hachureDirty = true;
+    markDirty();
+  }
+  function setSlopeSpacing(v) {
+    slopeSpacing = v;
+    g('slopespace-sw').checked = v;
+    g('slopespace-ctrl').classList.toggle('hidden', !v);
+    ridgelineDirty = true;
+    markDirty();
+  }
+  function setSlopeSpacingStr(v) {
+    slopeSpacingStr = constrain(floor(v), 1, 10);
+    g('slopespacestr-sl').value = slopeSpacingStr;
+    g('slopespacestr-v').textContent = slopeSpacingStr;
+    ridgelineDirty = true;
+    markDirty();
+  }
   function setPngScale(v)        { pngScale = v; [1,2,4].forEach(s => g('pngscale-'+s).classList.toggle('active', s===v)); }
   function setRecordDuration(v)  { recordDuration = constrain(floor(v), 1, 30); g('recdur-sl').value = recordDuration; g('recdur-v').textContent = recordDuration + 's'; }
 
@@ -2053,6 +2546,9 @@
     setSlopeOpacity(slopeOpacity);
     setBlurRadius(blurRadius);
     setHachureLength(hachureLength);
+    setJitterAmt(jitterAmt);
+    setSlopeSpacing(slopeSpacing);
+    setSlopeSpacingStr(slopeSpacingStr);
     setElevCutMin(elevCutMin * 100);
     setElevCutMax(elevCutMax * 100);
     setPngScale(pngScale);
@@ -2188,6 +2684,9 @@
     on('strokelev-sl',       'input',  e => setStrokeElevRange(e.target.value));
     on('slopeopacity-sw',    'change', e => setSlopeOpacity(e.target.checked));
     on('hachure-sl',         'input',  e => setHachureLength(e.target.value));
+    on('jitter-sl',          'input',  e => setJitterAmt(e.target.value));
+    on('slopespace-sw',      'change', e => setSlopeSpacing(e.target.checked));
+    on('slopespacestr-sl',   'input',  e => setSlopeSpacingStr(e.target.value));
 
     g('img-input').addEventListener('change', function(e) {
       const file = e.target.files[0];
@@ -2565,6 +3064,7 @@
       drawMode, tightness, contourInterval, elevScale, blackPoint, whitePoint,
       bgColor, lineGradient, elevGradient: JSON.parse(JSON.stringify(elevGradient)), strokeByElev, strokeElevRange,
       slopeOpacity, blurRadius, hachureLength, elevCutMin, elevCutMax, pngScale, recordDuration, rotSpeed,
+      jitterAmt, slopeSpacing, slopeSpacingStr,
       particlesActive, particleSpring, particleBrownian, particleDamping,
       particleTrails, particleTrailLength, particleGravity, showGrid
     };
@@ -2623,6 +3123,9 @@
     setSlopeOpacity(sv('slopeOpacity', false));
     setBlurRadius(sv('blurRadius', 0));
     setHachureLength(sv('hachureLength', 10));
+    setJitterAmt(sv('jitterAmt', 0));
+    setSlopeSpacing(sv('slopeSpacing', false));
+    setSlopeSpacingStr(sv('slopeSpacingStr', 5));
     setElevCutMin(sv('elevCutMin', 0) * 100);
     setElevCutMax(sv('elevCutMax', 1) * 100);
     setPngScale(sv('pngScale', 1));
@@ -2737,6 +3240,7 @@
     elevGradient: [{pos:0, color:'#000000'}, {pos:1, color:'#ff6600'}],
     strokeByElev: false, strokeElevRange: 3, slopeOpacity: false,
     blurRadius: 0, hachureLength: 10, elevCutMin: 0, elevCutMax: 1, pngScale: 1, recordDuration: 4,
+    jitterAmt: 0, slopeSpacing: false, slopeSpacingStr: 5,
     particlesActive: false, particleSpring: 0.008, particleBrownian: 0.4,
     particleDamping: 0.88, particleTrails: true, particleTrailLength: 6, particleGravity: false,
     rotSpeed: 0.4, showGrid: false
@@ -2777,6 +3281,9 @@
     setSlopeOpacity(DEFAULTS.slopeOpacity);
     setBlurRadius(DEFAULTS.blurRadius);
     setHachureLength(DEFAULTS.hachureLength);
+    setJitterAmt(DEFAULTS.jitterAmt);
+    setSlopeSpacing(DEFAULTS.slopeSpacing);
+    setSlopeSpacingStr(DEFAULTS.slopeSpacingStr);
     setElevCutMin(DEFAULTS.elevCutMin * 100);
     setElevCutMax(DEFAULTS.elevCutMax * 100);
     setPngScale(DEFAULTS.pngScale);
